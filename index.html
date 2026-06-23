@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+    <title>PlayCanvas 3DGS Viewer</title>
+  </head>
+  <body>
+    <div id="toolbar" class="toolbar">
+      <label class="file-button" for="file-input">Choose .sog File</label>
+      <button id="load-public" type="button">Load public/assets/base.sog</button>
+      <button id="load-bim" type="button">Load BIM Proxy</button>
+      <button id="toggle-bim" type="button">Show/Hide BIM</button>
+      <button id="debug-bim" type="button">Debug BIM</button>
+      <button id="clear-marker" type="button">Clear Marker</button>
+      <input id="file-input" type="file" accept=".sog" />
+      <span id="status" class="status">Status: waiting for file</span>
+      <button id="reset-camera" type="button">Reset Camera</button>
+      <span class="controls-hint">LMB: Orbit | Shift+LMB/MMB/RMB: Pan | Wheel: Zoom | WASD: Move | Q/E: Up/Down | Shift: Faster</span>
+    </div>
+    <canvas id="app-canvas"></canvas>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

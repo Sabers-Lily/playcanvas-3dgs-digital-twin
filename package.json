@@ -1,0 +1,17 @@
+{
+  "name": "playcanvas-gsplat-local-viewer",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "playcanvas": "^2.19.7"
+  },
+  "devDependencies": {
+    "vite": "^7.0.0"
+  }
+}

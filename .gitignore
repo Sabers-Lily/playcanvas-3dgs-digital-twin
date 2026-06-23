@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+.vite/
+
+# logs
+*.log
+.tmp-*.log
+tmp-*.log
+
+# environment
+.env
+.env.local
+.env.*.local
+
+# system files
+.DS_Store
+Thumbs.db
+
+# local temporary folders
+input/
+uploads/
+
+# large local 3D assets
+public/assets/*.sog
+public/assets/*.ply
+public/assets/*.glb
