@@ -1,0 +1,15 @@
+{
+  "name": "api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@playcanvas/splat-transform": "^1.10.2",
+    "obj2gltf": "^3.2.0"
+  }
+}

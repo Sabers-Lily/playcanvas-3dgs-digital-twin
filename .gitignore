@@ -9,6 +9,7 @@ dist/
 *.log
 .tmp-*.log
 tmp-*.log
+build.log
 
 # environment
 .env
@@ -23,7 +24,23 @@ Thumbs.db
 input/
 uploads/
 
-# large local 3D assets
-public/assets/*.sog
-public/assets/*.ply
-public/assets/*.glb
+# Local API runtime data
+apps/api/data/**/*.json
+!apps/api/data/.gitkeep
+!apps/api/data/scenes/.gitkeep
+!apps/api/data/assets/.gitkeep
+
+# Local uploaded assets
+apps/api/storage/assets/**
+apps/api/data/assets/*.json
+!apps/api/storage/.gitkeep
+!apps/api/storage/assets/.gitkeep
+!apps/api/data/assets/.gitkeep
+
+# Large local 3D assets
+apps/web/public/assets/*.sog
+apps/web/public/assets/*.glb
+apps/web/public/assets/*.gltf
+apps/web/public/assets/*.ply
+apps/web/public/assets/*.obj
+apps/web/public/assets/converted/*.sog

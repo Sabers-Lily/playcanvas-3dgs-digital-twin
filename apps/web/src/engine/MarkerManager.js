@@ -13,7 +13,7 @@ export class MarkerManager {
   placeMarker(point) {
     this.clearMarker();
 
-    const marker = new pc.Entity('BIM Pick Marker');
+    const marker = new pc.Entity('Pick Marker');
     marker.addComponent('render', {
       type: 'sphere',
       material: this.material,
