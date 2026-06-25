@@ -1,0 +1,2604 @@
+import * as pc from 'playcanvas';
+import { ASSET_LABELS, ASSET_PATHS } from '../config/assets.js';
+import { BimAlignmentManager, DEFAULT_BIM_ALIGNMENT } from '../engine/BimAlignmentManager.js';
+import { BimProxyManager } from '../engine/BimProxyManager.js';
+import { CameraController } from '../engine/CameraController.js';
+import { GsplatMp4ProjectorAdapter } from '../engine/GsplatMp4ProjectorAdapter.js';
+import { GsplatPointPicker } from '../engine/GsplatPointPicker.js';
+import { MarkerManager } from '../engine/MarkerManager.js';
+import { PickingController } from '../engine/PickingController.js';
+import { SceneObjectManager } from '../editor/SceneObjectManager.js';
+import { SelectionManager } from '../editor/SelectionManager.js';
+
+const OBJECT_IDS = {
+  camera: 'camera',
+  debug: 'debug-helpers',
+  gsplat: 'base-map',
+  bim: 'bim-proxy',
+  marker: 'pick-marker'
+};
+
+const TRANSFORM_EDITABLE_TYPES = new Set([
+  'gsplat',
+  'bim-proxy',
+  'model',
+  'glb',
+  'empty',
+  'robot',
+  'cameraDevice',
+  'device',
+  'hotspot',
+  'annotation',
+  'routePoint'
+]);
+const RESTORABLE_OBJECT_TYPES = new Set([
+  'gsplat',
+  'bim-proxy',
+  'glb',
+  'model',
+  'marker',
+  'empty',
+  'robot',
+  'cameraDevice',
+  'device',
+  'hotspot',
+  'annotation',
+  'routePoint'
+]);
+const MAX_LOGS = 100;
+
+const BUSINESS_OBJECT_DEFINITIONS = {
+  empty: {
+    idPrefix: 'empty',
+    displayName: '空对象',
+    typeLabel: '空对象',
+    businessType: 'empty'
+  },
+  robot: {
+    idPrefix: 'robot',
+    displayName: '机器狗',
+    typeLabel: '机器狗',
+    businessType: 'robot'
+  },
+  cameraDevice: {
+    idPrefix: 'camera_device',
+    displayName: '摄像头',
+    typeLabel: '摄像头',
+    businessType: 'camera'
+  },
+  device: {
+    idPrefix: 'device',
+    displayName: '设备',
+    typeLabel: '设备',
+    businessType: 'device'
+  },
+  hotspot: {
+    idPrefix: 'hotspot',
+    displayName: '热点',
+    typeLabel: '热点',
+    businessType: 'hotspot'
+  },
+  annotation: {
+    idPrefix: 'annotation',
+    displayName: '标注',
+    typeLabel: '标注',
+    businessType: 'annotation'
+  },
+  routePoint: {
+    idPrefix: 'route_point',
+    displayName: '路线点',
+    typeLabel: '路线点',
+    businessType: 'routePoint'
+  }
+};
+
+function shouldLogPerf() {
+  return typeof window !== 'undefined' && Boolean(window.__MINI_EDITOR_PERF__);
+}
+
+function describeError(err) {
+  if (!err) {
+    return 'Unknown error';
+  }
+
+  if (typeof err.message === 'string' && err.message) {
+    return err.message;
+  }
+
+  try {
+    return JSON.stringify(err);
+  } catch (_jsonError) {
+    return String(err);
+  }
+}
+
+function readNumberValue(value, fallback) {
+  const next = Number.parseFloat(value);
+  return Number.isFinite(next) ? next : fallback;
+}
+
+function cloneTransform(transform) {
+  return {
+    position: [...(transform?.position ?? [0, 0, 0])],
+    rotation: [...(transform?.rotation ?? [0, 0, 0])],
+    scale: [...(transform?.scale ?? [1, 1, 1])]
+  };
+}
+
+function getTransformFromEntity(entity) {
+  if (!entity) {
+    return cloneTransform();
+  }
+
+  const position = entity.getLocalPosition();
+  const rotation = entity.getLocalEulerAngles();
+  const scale = entity.getLocalScale();
+
+  return {
+    position: [position.x, position.y, position.z],
+    rotation: [rotation.x, rotation.y, rotation.z],
+    scale: [scale.x, scale.y, scale.z]
+  };
+}
+
+function normalizeScale(scale) {
+  if (Array.isArray(scale)) {
+    return scale.map((value) => {
+      const next = Number.parseFloat(value);
+      return Number.isFinite(next) && next > 0 ? next : 1;
+    });
+  }
+
+  const next = Number.parseFloat(scale);
+  const safe = Number.isFinite(next) && next > 0 ? next : 1;
+  return [safe, safe, safe];
+}
+
+function sanitizeTransformInput(transform, fallbackTransform = cloneTransform()) {
+  const fallback = cloneTransform(fallbackTransform);
+
+  return {
+    position: [
+      readNumberValue(transform?.position?.[0], fallback.position[0]),
+      readNumberValue(transform?.position?.[1], fallback.position[1]),
+      readNumberValue(transform?.position?.[2], fallback.position[2])
+    ],
+    rotation: [
+      readNumberValue(transform?.rotation?.[0], fallback.rotation[0]),
+      readNumberValue(transform?.rotation?.[1], fallback.rotation[1]),
+      readNumberValue(transform?.rotation?.[2], fallback.rotation[2])
+    ],
+    scale: normalizeScale(transform?.scale ?? fallback.scale)
+  };
+}
+
+function isBlobAssetUrl(url) {
+  return typeof url === 'string' && url.startsWith('blob:');
+}
+
+function isRestorableAssetUrl(url) {
+  return typeof url === 'string' && (url.startsWith('/assets/') || url.startsWith('/api/assets/'));
+}
+
+function normalizeRestoredObjectPayload(object) {
+  return {
+    id: object?.id,
+    type: object?.type,
+    displayName: object?.displayName || object?.name || object?.metadata?.sourceName || 'Restored Object',
+    visible: object?.visible ?? true,
+    transform: sanitizeTransformInput(object?.transform),
+    metadata: {
+      url: object?.metadata?.url,
+      sourceName: object?.metadata?.sourceName || object?.displayName || object?.name || 'asset',
+      source: object?.metadata?.source,
+      assetId: object?.metadata?.assetId,
+      sourceAssetId: object?.metadata?.sourceAssetId,
+      assetType: object?.metadata?.assetType,
+      runtimeType: object?.metadata?.runtimeType,
+      size: object?.metadata?.size,
+      businessType: object?.metadata?.businessType,
+      placedBy: object?.metadata?.placedBy,
+      videoProjection: object?.metadata?.videoProjection
+    }
+  };
+}
+
+function clampMenuPosition(x, y, width = 200, height = 240) {
+  const maxX = Math.max(8, window.innerWidth - width - 8);
+  const maxY = Math.max(8, window.innerHeight - height - 8);
+  return {
+    x: Math.max(8, Math.min(x, maxX)),
+    y: Math.max(8, Math.min(y, maxY))
+  };
+}
+
+function createBusinessObjectId(type, prefix = 'object') {
+  return `${prefix}_${type}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function formatPointLog(point) {
+  return `x=${point.x.toFixed(2)}, y=${point.y.toFixed(2)}, z=${point.z.toFixed(2)}`;
+}
+
+function createDefaultVideoProjectionMetadata(id, partial = {}) {
+  return {
+    id,
+    enabled: partial.enabled ?? true,
+    videoUrl: partial.videoUrl ?? '',
+    calibrationMode: partial.calibrationMode ?? 'fourPoint',
+    opacity: readNumberValue(partial.opacity, 1),
+    softEdge: readNumberValue(partial.softEdge, 0.05),
+    flipY: Boolean(partial.flipY),
+    calibrationState: partial.calibrationState ?? 'idle',
+    calibrationIndex: Number.isFinite(partial.calibrationIndex) ? partial.calibrationIndex : 0,
+    calibrationPoints: [0, 1, 2, 3].map((index) => {
+      const source = partial.calibrationPoints?.[index] ?? null;
+      return {
+        index,
+        videoUv: Array.isArray(source?.videoUv) ? [...source.videoUv] : (
+          index === 0 ? [0, 1] :
+          index === 1 ? [1, 1] :
+          index === 2 ? [1, 0] :
+          [0, 0]
+        ),
+        worldPoint: Array.isArray(source?.worldPoint) ? [...source.worldPoint] : null
+      };
+    })
+  };
+}
+
+export function createMiniEditorRuntime({ canvas, viewportElement }) {
+  const app = new pc.Application(canvas, {
+    mouse: new pc.Mouse(document.body),
+    touch: new pc.TouchDevice(document.body)
+  });
+
+  app.setCanvasFillMode(pc.FILLMODE_NONE);
+  app.setCanvasResolution(pc.RESOLUTION_AUTO);
+  app.start();
+
+  app.scene.ambientLight = new pc.Color(0.25, 0.25, 0.25);
+  app.scene.gammaCorrection = pc.GAMMA_SRGB;
+  app.scene.toneMapping = pc.TONEMAP_ACES;
+
+  const camera = new pc.Entity('Camera');
+  camera.addComponent('camera', {
+    clearColor: new pc.Color(0.08, 0.09, 0.12),
+    fov: 60
+  });
+  app.root.addChild(camera);
+
+  const light = new pc.Entity('DirectionalLight');
+  light.addComponent('light', {
+    type: 'directional',
+    color: new pc.Color(1, 1, 1),
+    intensity: 1.5,
+    castShadows: false
+  });
+  light.setLocalEulerAngles(45, 30, 0);
+  app.root.addChild(light);
+
+  const sceneObjectManager = new SceneObjectManager();
+  const selectionManager = new SelectionManager(sceneObjectManager);
+  const bimAlignmentManager = new BimAlignmentManager();
+  const bimProxyManager = new BimProxyManager({ app });
+  const markerManager = new MarkerManager({ app });
+
+  const cameraController = new CameraController({
+    app,
+    camera,
+    canvas
+  });
+
+  cameraController.setDefaultFocus({
+    target: new pc.Vec3(0, 0, 0),
+    distance: 80,
+    yaw: 0,
+    pitch: 45
+  });
+  cameraController.reset();
+
+  sceneObjectManager.addObject({
+    id: OBJECT_IDS.camera,
+    name: camera.name,
+    displayName: camera.name,
+    type: 'camera',
+    entity: camera,
+    transform: getTransformFromEntity(camera),
+    visible: camera.enabled,
+    status: 'active',
+    canHide: false,
+    protected: true,
+    metadata: {}
+  });
+
+  const debugEntity = bimProxyManager.createFallbackGroundProxy();
+  sceneObjectManager.addObject({
+    id: OBJECT_IDS.debug,
+    name: 'Debug Helpers',
+    displayName: 'Debug Helpers',
+    type: 'debug',
+    entity: debugEntity,
+    transform: getTransformFromEntity(debugEntity),
+    visible: debugEntity.enabled,
+    status: 'ready',
+    canHide: true,
+    protected: true,
+    metadata: {}
+  });
+
+  const statusState = {
+    sog: {
+      state: 'idle',
+      detail: 'SOG idle'
+    },
+    bim: {
+      state: 'idle',
+      detail: 'BIM idle'
+    },
+    pick: {
+      state: 'ready',
+      detail: 'Ready'
+    },
+    message: 'Ready'
+  };
+
+  const assetAvailability = {
+    [ASSET_PATHS.baseSog]: 'checking',
+    [ASSET_PATHS.convertedSog]: 'checking',
+    [ASSET_PATHS.bimProxy]: 'checking'
+  };
+
+  const state = {
+    objects: sceneObjectManager.getObjectSnapshots(),
+    selectedId: selectionManager.getSelectedId(),
+    selectedObject: selectionManager.getSelectedSnapshot(),
+    alignment: bimAlignmentManager.getCurrent(),
+    steps: {
+      move: 1,
+      rotate: 1,
+      scale: 0.01
+    },
+    logs: ['Ready'],
+    assets: [],
+    uploadedAssets: [],
+    statusMessage: 'Ready',
+    statusSummary: {
+      sog: statusState.sog.detail,
+      bim: statusState.bim.detail,
+      pick: statusState.pick.detail
+    },
+    contextMenu: {
+      open: false,
+      objectId: null,
+      x: 0,
+      y: 0
+    }
+  };
+
+  const listeners = new Set();
+  let emitScheduled = false;
+
+  let currentGsplatEntity = null;
+  let currentAsset = null;
+  let currentBlobUrl = null;
+  let loadToken = 0;
+  let placementMode = null;
+  let activeProjectorCameraId = null;
+  let activeMp4Projector = null;
+
+  function syncCameraProjectionMetadata(cameraId, patch = {}) {
+    const target = sceneObjectManager.getObject(cameraId);
+    if (!target || target.type !== 'cameraDevice') {
+      return null;
+    }
+
+    const nextProjection = createDefaultVideoProjectionMetadata(cameraId, {
+      ...target.metadata?.videoProjection,
+      ...patch
+    });
+
+    sceneObjectManager.updateObject(cameraId, {
+      metadata: {
+        ...target.metadata,
+        videoProjection: nextProjection
+      }
+    });
+
+    return nextProjection;
+  }
+
+  function destroyActiveMp4Projector() {
+    if (!activeMp4Projector) {
+      return;
+    }
+
+    activeMp4Projector.destroy();
+    activeMp4Projector = null;
+  }
+
+  function ensureMp4ProjectorForCamera(cameraId, options = {}) {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject?.entity) {
+      throw new Error(`Camera device missing: ${cameraId}`);
+    }
+
+    const projection = createDefaultVideoProjectionMetadata(cameraId, {
+      ...cameraObject.metadata?.videoProjection,
+      ...options
+    });
+
+    const shouldRecreate = !activeMp4Projector || activeProjectorCameraId !== cameraId;
+    if (shouldRecreate) {
+      destroyActiveMp4Projector();
+      activeMp4Projector = new GsplatMp4ProjectorAdapter({
+        app,
+        gsplatEntity: currentGsplatEntity,
+        mainCameraEntity: camera,
+        projectorEntity: cameraObject.entity,
+        videoUrl: projection.videoUrl,
+        opacity: projection.opacity,
+        softEdge: projection.softEdge,
+        flipY: projection.flipY,
+        enabledProjection: projection.enabled,
+        logDebug: true
+      });
+      activeMp4Projector.initialize();
+      activeProjectorCameraId = cameraId;
+    } else {
+      activeMp4Projector.patch({
+        gsplatEntity: currentGsplatEntity,
+        mainCameraEntity: camera,
+        projectorEntity: cameraObject.entity,
+        videoUrl: projection.videoUrl,
+        opacity: projection.opacity,
+        softEdge: projection.softEdge,
+        flipY: projection.flipY,
+        enabledProjection: projection.enabled
+      });
+    }
+
+    syncCameraProjectionMetadata(cameraId, {
+      ...projection,
+      calibrationState: projection.videoUrl ? 'ready' : 'idle',
+      calibrationIndex: projection.videoUrl ? 4 : 0
+    });
+
+    return activeMp4Projector;
+  }
+
+  function getCurrentSplatState() {
+    return {
+      entity: currentGsplatEntity,
+      asset: currentAsset,
+      blobUrl: currentBlobUrl
+    };
+  }
+
+  function updateDebugHandles() {
+    window.app = app;
+    window.pc = pc;
+    window.currentSplatEntity = currentGsplatEntity;
+    window.currentSplatAsset = currentAsset;
+    window.cameraController = cameraController;
+    window.bimProxyManager = bimProxyManager;
+    window.bimAlignmentManager = bimAlignmentManager;
+    window.markerManager = markerManager;
+    window.sceneObjectManager = sceneObjectManager;
+    window.selectionManager = selectionManager;
+    window.placementMode = placementMode;
+    window.gsplatVideoProjector = activeMp4Projector;
+    window.bindTestProjection = (cameraId = 'camera_0') => enableCameraVideoProjection(cameraId, {
+      videoUrl: '/assets/test.mp4'
+    });
+    window.testVideoPreviewPlane = async (cameraId = 'camera_0') => {
+      return enableCameraVideoProjection(cameraId, {
+        videoUrl: '/assets/test.mp4'
+      });
+    };
+    window.testGsplatForcePurple = async (cameraId = 'camera_0') => {
+      return enableCameraVideoProjection(cameraId, {
+        videoUrl: '/assets/test.mp4'
+      });
+    };
+    window.testCameraProjectionUv = async (cameraId = 'camera_0') => {
+      return enableCameraVideoProjection(cameraId, {
+        videoUrl: '/assets/test.mp4'
+      });
+    };
+    window.testCameraProjectionNoDepth = async (cameraId = 'camera_0') => {
+      return enableCameraVideoProjection(cameraId, {
+        videoUrl: '/assets/test.mp4'
+      });
+    };
+    window.testCameraProjection = async (cameraId = 'camera_0') => {
+      return enableCameraVideoProjection(cameraId, {
+        videoUrl: '/assets/test.mp4',
+        shaderDebugMode: 'projectVideo',
+        forceTestVideo: true
+      });
+    };
+  }
+
+  function formatCameraState() {
+    const next = cameraController.getState();
+    return {
+      target: `${next.target.x.toFixed(2)}, ${next.target.y.toFixed(2)}, ${next.target.z.toFixed(2)}`,
+      distance: next.distance.toFixed(2),
+      yaw: next.yaw.toFixed(1),
+      pitch: next.pitch.toFixed(1)
+    };
+  }
+
+  function formatAlignmentStatus(alignment) {
+    return `BIM alignment applied: x=${alignment.position[0].toFixed(2)}, y=${alignment.position[1].toFixed(2)}, z=${alignment.position[2].toFixed(2)}, ry=${alignment.rotation[1].toFixed(1)}, scale=${alignment.scale[0].toFixed(2)}`;
+  }
+
+  function applyTransformToObject(objectId, transform, options = {}) {
+    const object = sceneObjectManager.getObject(objectId);
+    if (!object?.entity) {
+      console.warn('[Transform] missing entity:', objectId);
+      return false;
+    }
+
+    const fallbackTransform = object.transform ?? getTransformFromEntity(object.entity);
+    const nextTransform = sanitizeTransformInput(transform, fallbackTransform);
+    const [x, y, z] = nextTransform.position;
+    const [rx, ry, rz] = nextTransform.rotation;
+    const [sx, sy, sz] = nextTransform.scale;
+
+    object.entity.setLocalPosition(x, y, z);
+    object.entity.setLocalEulerAngles(rx, ry, rz);
+    object.entity.setLocalScale(sx, sy, sz);
+
+    sceneObjectManager.updateObject(objectId, {
+      transform: nextTransform
+    });
+
+    if (options.updateBimAlignment) {
+      bimAlignmentManager.setCurrent(nextTransform);
+    }
+
+    console.log('[Transform] committed:', objectId, nextTransform);
+    return nextTransform;
+  }
+
+  function getTransformForObject(objectId) {
+    const object = sceneObjectManager.getObject(objectId);
+    if (!object) {
+      return null;
+    }
+
+    return cloneTransform(object.transform ?? getTransformFromEntity(object.entity));
+  }
+
+  function pushLog(message) {
+    state.logs = [message, ...state.logs].slice(0, MAX_LOGS);
+  }
+
+  function buildAssetsSnapshot() {
+    const builtInAssets = [
+      {
+        id: 'base-map',
+        kind: 'gsplat',
+        label: 'base.sog',
+        status: assetAvailability[ASSET_PATHS.baseSog],
+        sourceName: 'base.sog',
+        type: 'gsplat',
+        size: null,
+        url: ASSET_PATHS.baseSog,
+        createdAt: null
+      },
+      {
+        id: 'bim-proxy',
+        kind: 'bim',
+        label: ASSET_LABELS.bimProxy,
+        status: assetAvailability[ASSET_PATHS.bimProxy],
+        sourceName: ASSET_LABELS.bimProxy,
+        type: 'glb',
+        size: null,
+        url: ASSET_PATHS.bimProxy,
+        createdAt: null
+      },
+      {
+        id: 'converted-sog',
+        kind: 'gsplat',
+        label: 'converted/map.sog',
+        status: assetAvailability[ASSET_PATHS.convertedSog],
+        sourceName: 'converted/map.sog',
+        type: 'gsplat',
+        size: null,
+        url: ASSET_PATHS.convertedSog,
+        createdAt: null
+      }
+    ];
+
+    const uploadedAssets = state.uploadedAssets.map((asset) => ({
+      id: asset.id,
+      kind: asset.type,
+      label: asset.sourceName,
+      status: asset.status ?? 'uploaded',
+      sourceName: asset.sourceName,
+      type: asset.type,
+      size: asset.size,
+      url: asset.url,
+      createdAt: asset.createdAt,
+      role: asset.role,
+      runtimeType: asset.runtimeType,
+      sourceAssetId: asset.sourceAssetId ?? null,
+      derivedAssetIds: Array.isArray(asset.derivedAssetIds) ? [...asset.derivedAssetIds] : [],
+      derivedAssets: Array.isArray(asset.derivedAssets) ? asset.derivedAssets.map((derivedAsset) => ({ ...derivedAsset })) : [],
+      preferredRuntimeAsset: asset.preferredRuntimeAsset ? { ...asset.preferredRuntimeAsset } : null,
+      error: asset.error ?? null
+    }));
+
+    return [...builtInAssets, ...uploadedAssets];
+  }
+
+  function buildRuntimeSnapshot() {
+    state.objects = sceneObjectManager.getObjectSnapshots();
+    state.selectedId = selectionManager.getSelectedId();
+    state.selectedObject = selectionManager.getSelectedSnapshot();
+    state.alignment = bimAlignmentManager.getCurrent();
+    state.assets = buildAssetsSnapshot();
+    state.statusMessage = statusState.message;
+    state.statusSummary = {
+      sog: statusState.sog.detail,
+      bim: statusState.bim.detail,
+      pick: statusState.pick.detail
+    };
+
+    return {
+      objects: state.objects,
+      selectedId: state.selectedId,
+      selectedObject: state.selectedObject,
+      alignment: state.alignment,
+      steps: { ...state.steps },
+      logs: [...state.logs],
+      assets: state.assets,
+      statusMessage: state.statusMessage,
+      statusSummary: { ...state.statusSummary },
+      contextMenu: { ...state.contextMenu },
+      cameraState: formatCameraState()
+    };
+  }
+
+  function flushState() {
+    const snapshot = buildRuntimeSnapshot();
+    listeners.forEach((listener) => listener(snapshot));
+  }
+
+  function emitState() {
+    if (emitScheduled) {
+      return;
+    }
+
+    emitScheduled = true;
+    requestAnimationFrame(() => {
+      emitScheduled = false;
+      flushState();
+    });
+  }
+
+  function updateStatusMessage(message) {
+    statusState.message = message;
+    pushLog(message);
+    emitState();
+  }
+
+  function setUploadedAssets(assets) {
+    state.uploadedAssets = Array.isArray(assets) ? assets.map((asset) => ({ ...asset })) : [];
+    emitState();
+  }
+
+  function setSogStatus(stateName, detail, message = detail) {
+    statusState.sog.state = stateName;
+    statusState.sog.detail = detail;
+    updateStatusMessage(message);
+  }
+
+  function setBimStatus(stateName, detail, message = detail) {
+    statusState.bim.state = stateName;
+    statusState.bim.detail = detail;
+    updateStatusMessage(message);
+  }
+
+  function setPickStatus(stateName, detail, message = detail) {
+    statusState.pick.state = stateName;
+    statusState.pick.detail = detail;
+    updateStatusMessage(message);
+  }
+
+  function destroySplatState(nextState) {
+    if (nextState.entity) {
+      nextState.entity.destroy();
+    }
+
+    if (nextState.asset) {
+      nextState.asset.off();
+      nextState.asset.unload();
+      if (app.assets.get(nextState.asset.id)) {
+        app.assets.remove(nextState.asset);
+      }
+    }
+
+    if (nextState.blobUrl) {
+      URL.revokeObjectURL(nextState.blobUrl);
+    }
+  }
+
+  function resizeViewport() {
+    const rect = viewportElement.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      app.resizeCanvas(rect.width, rect.height);
+    }
+  }
+
+  const resizeObserver = new ResizeObserver(() => {
+    resizeViewport();
+  });
+  resizeObserver.observe(viewportElement);
+  window.addEventListener('resize', resizeViewport);
+
+  function getGsplatBounds(entity, asset) {
+    const candidates = [
+      entity?.gsplat?.instance?.meshInstance?.aabb,
+      entity?.gsplat?.instance?.resource?.aabb,
+      entity?.gsplat?.customAabb,
+      asset?.resource?.aabb
+    ];
+
+    for (const candidate of candidates) {
+      if (candidate?.center && candidate?.halfExtents) {
+        return candidate.clone ? candidate.clone() : candidate;
+      }
+    }
+
+    return null;
+  }
+
+  function focusLoadedMap(entity = currentGsplatEntity, asset = currentAsset) {
+    const aabb = getGsplatBounds(entity, asset);
+    if (aabb) {
+      cameraController.focusAabb(aabb, {
+        yaw: 0,
+        pitch: 45,
+        minDistance: 80
+      });
+      emitState();
+      return true;
+    }
+
+    cameraController.focus(new pc.Vec3(0, 0, 0), 80, {
+      yaw: 0,
+      pitch: 45
+    });
+    emitState();
+    return true;
+  }
+
+  function createGsplatEntity(name, asset) {
+    const entity = new pc.Entity(name);
+    entity.addComponent('gsplat', { asset });
+    app.root.addChild(entity);
+    return entity;
+  }
+
+  function getDefaultCreatePosition() {
+    const marker = markerManager.marker;
+    if (marker?.getPosition) {
+      const position = marker.getPosition();
+      return [position.x, position.y, position.z];
+    }
+
+    return [0, 0, 0];
+  }
+
+  function createBusinessPlaceholderEntity(type, displayName) {
+    const entity = new pc.Entity(displayName);
+    const material = new pc.StandardMaterial();
+
+    switch (type) {
+      case 'empty': {
+        material.diffuse = new pc.Color(0.86, 0.88, 0.92);
+        material.opacity = 0.25;
+        material.blendType = pc.BLEND_NORMAL;
+        material.update();
+        entity.addComponent('render', {
+          type: 'box',
+          castShadows: false,
+          receiveShadows: false,
+          material
+        });
+        entity.setLocalScale(0.4, 0.4, 0.4);
+        break;
+      }
+      case 'robot': {
+        material.diffuse = new pc.Color(0.91, 0.63, 0.22);
+        material.update();
+        entity.addComponent('render', {
+          type: 'box',
+          castShadows: false,
+          receiveShadows: false,
+          material
+        });
+        entity.setLocalScale(0.9, 0.55, 1.2);
+        break;
+      }
+      case 'cameraDevice': {
+        material.diffuse = new pc.Color(0.38, 0.79, 0.96);
+        material.update();
+        entity.addComponent('render', {
+          type: 'box',
+          castShadows: false,
+          receiveShadows: false,
+          material
+        });
+        entity.setLocalScale(0.45, 0.32, 0.75);
+        break;
+      }
+      case 'device': {
+        material.diffuse = new pc.Color(0.52, 0.82, 0.44);
+        material.update();
+        entity.addComponent('render', {
+          type: 'box',
+          castShadows: false,
+          receiveShadows: false,
+          material
+        });
+        entity.setLocalScale(0.45, 0.45, 0.45);
+        break;
+      }
+      case 'hotspot': {
+        material.diffuse = new pc.Color(0.94, 0.28, 0.45);
+        material.emissive = new pc.Color(0.35, 0.04, 0.12);
+        material.update();
+        entity.addComponent('render', {
+          type: 'sphere',
+          castShadows: false,
+          receiveShadows: false,
+          material
+        });
+        entity.setLocalScale(0.35, 0.35, 0.35);
+        break;
+      }
+      case 'annotation': {
+        material.diffuse = new pc.Color(0.98, 0.9, 0.35);
+        material.update();
+        entity.addComponent('render', {
+          type: 'sphere',
+          castShadows: false,
+          receiveShadows: false,
+          material
+        });
+        entity.setLocalScale(0.3, 0.3, 0.3);
+        break;
+      }
+      case 'routePoint': {
+        material.diffuse = new pc.Color(0.72, 0.55, 0.96);
+        material.update();
+        entity.addComponent('render', {
+          type: 'sphere',
+          castShadows: false,
+          receiveShadows: false,
+          material
+        });
+        entity.setLocalScale(0.28, 0.28, 0.28);
+        break;
+      }
+      default:
+        return null;
+    }
+
+    app.root.addChild(entity);
+    return entity;
+  }
+
+  function createBusinessSceneObject(type, options = {}) {
+    const definition = BUSINESS_OBJECT_DEFINITIONS[type];
+    if (!definition) {
+      updateStatusMessage(`Unsupported object type: ${type}`);
+      return null;
+    }
+
+    const id = options.id || createBusinessObjectId(type, definition.idPrefix);
+    const displayName = options.displayName || definition.displayName;
+    const entity = createBusinessPlaceholderEntity(type, displayName);
+    if (!entity) {
+      updateStatusMessage(`Create object failed: ${displayName}`);
+      return null;
+    }
+
+    const transform = sanitizeTransformInput(options.transform, {
+      position: getDefaultCreatePosition(),
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1]
+    });
+
+    entity.setLocalPosition(...transform.position);
+    entity.setLocalEulerAngles(...transform.rotation);
+    entity.setLocalScale(...transform.scale);
+
+    const projectionMetadata = type === 'cameraDevice'
+      ? createDefaultVideoProjectionMetadata(id, options.metadata?.videoProjection)
+      : null;
+
+    sceneObjectManager.addObject({
+      id,
+      name: displayName,
+      displayName,
+      type,
+      typeLabel: definition.typeLabel,
+      entity,
+      transform: getTransformFromEntity(entity),
+      visible: options.visible ?? true,
+      status: 'active',
+      metadata: {
+        businessType: options.metadata?.businessType ?? definition.businessType,
+        source: options.metadata?.source ?? 'editor-created',
+        placedBy: options.metadata?.placedBy,
+        videoProjection: projectionMetadata
+      }
+    });
+
+    if (options.visible === false) {
+      sceneObjectManager.setVisible(id, false);
+    }
+
+    selectionManager.select(id);
+    updateStatusMessage(`Added scene object: ${displayName}`);
+    return { id, type, entity };
+  }
+
+  function startPlacementMode(type) {
+    const definition = BUSINESS_OBJECT_DEFINITIONS[type];
+    if (!definition) {
+      updateStatusMessage(`Unsupported object type: ${type}`);
+      return false;
+    }
+
+    placementMode = {
+      type,
+      label: definition.displayName
+    };
+    console.debug(`[Placement] mode started: ${type}`);
+    updateStatusMessage(`Placement mode: ${definition.displayName}, click map to place`);
+    return true;
+  }
+
+  function cancelPlacementMode() {
+    if (!placementMode) {
+      return false;
+    }
+
+    placementMode = null;
+    console.debug('[Placement] mode cancelled');
+    updateStatusMessage('Placement cancelled');
+    return true;
+  }
+
+  function placeBusinessObjectAt(type, worldPoint) {
+    if (!worldPoint) {
+      return null;
+    }
+
+    const definition = BUSINESS_OBJECT_DEFINITIONS[type];
+    if (!definition) {
+      updateStatusMessage(`Unsupported object type: ${type}`);
+      return null;
+    }
+
+    const result = createBusinessSceneObject(type, {
+      transform: {
+        position: [worldPoint.x, worldPoint.y, worldPoint.z],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1]
+      },
+      metadata: {
+        businessType: definition.businessType,
+        source: 'editor-created',
+        placedBy: 'gsplat-pick'
+      }
+    });
+
+    if (!result) {
+      return null;
+    }
+
+    placementMode = null;
+    console.debug(`[Placement] placed on gsplat: ${type} at ${formatPointLog(worldPoint)}`);
+    updateStatusMessage(`Placed ${definition.displayName} at ${formatPointLog(worldPoint)}`);
+    return result;
+  }
+
+  function pickBusinessObject(screenX, screenY) {
+    let closest = null;
+
+    sceneObjectManager.getObjects()
+      .filter((object) => BUSINESS_OBJECT_DEFINITIONS[object.type] && object.visible)
+      .forEach((object) => {
+        if (!object.entity) {
+          return;
+        }
+
+        const screenPoint = camera.camera.worldToScreen(object.entity.getPosition());
+        if (!Number.isFinite(screenPoint.x) || !Number.isFinite(screenPoint.y) || screenPoint.z < 0 || screenPoint.z > 1) {
+          return;
+        }
+
+        const dx = screenPoint.x - screenX;
+        const dy = screenPoint.y - screenY;
+        const distanceSq = dx * dx + dy * dy;
+        const thresholdSq = 24 * 24;
+
+        if (distanceSq > thresholdSq) {
+          return;
+        }
+
+        if (!closest || distanceSq < closest.distanceSq) {
+          closest = {
+            objectId: object.id,
+            object,
+            distanceSq
+          };
+        }
+      });
+
+    if (closest) {
+      console.debug(`[Pick] business object hit: ${closest.objectId}`);
+    }
+
+    return closest;
+  }
+
+  function releaseFailedAsset(asset, failedBlobUrl) {
+    asset.off();
+    asset.unload();
+    if (app.assets.get(asset.id)) {
+      app.assets.remove(asset);
+    }
+
+    if (failedBlobUrl) {
+      URL.revokeObjectURL(failedBlobUrl);
+    }
+  }
+
+  function loadSplatTransactional({ displayName, url, filename, size, failedBlobUrl = null, detailUrl = filename }) {
+    return new Promise((resolve, reject) => {
+      loadToken += 1;
+      const token = loadToken;
+      const previousState = getCurrentSplatState();
+
+      const asset = new pc.Asset(displayName, 'gsplat', {
+        url,
+        filename,
+        ...(typeof size === 'number' ? { size } : {})
+      });
+
+      app.assets.add(asset);
+      setSogStatus('loading', `SOG loading: ${detailUrl}`);
+
+      asset.on('progress', (receivedBytes, totalBytes) => {
+        if (token !== loadToken || totalBytes <= 0) {
+          return;
+        }
+
+        const percent = ((receivedBytes / totalBytes) * 100).toFixed(1);
+        statusState.sog.state = 'loading';
+        statusState.sog.detail = `SOG loading ${percent}%: ${detailUrl}`;
+        emitState();
+      });
+
+      asset.once('load', () => {
+        if (token !== loadToken) {
+          releaseFailedAsset(asset, failedBlobUrl);
+          reject(new Error(`SOG load superseded: ${displayName}`));
+          return;
+        }
+
+        try {
+          const entity = createGsplatEntity(displayName, asset);
+          currentGsplatEntity = entity;
+          currentAsset = asset;
+          currentBlobUrl = failedBlobUrl;
+          sceneObjectManager.addObject({
+            id: OBJECT_IDS.gsplat,
+            name: displayName,
+            displayName,
+            type: 'gsplat',
+            entity,
+            asset,
+            transform: getTransformFromEntity(entity),
+            visible: entity.enabled,
+            status: 'loaded',
+            metadata: {
+              url: detailUrl,
+              source: url.startsWith('blob:') ? 'local' : 'public',
+              sourceName: filename
+            }
+          });
+          updateDebugHandles();
+
+          destroySplatState(previousState);
+
+          requestAnimationFrame(() => {
+            focusLoadedMap(entity, asset);
+            selectionManager.select(OBJECT_IDS.gsplat);
+            setSogStatus('loaded', `SOG loaded: ${displayName}`);
+            resolve({
+              id: OBJECT_IDS.gsplat,
+              entity,
+              asset
+            });
+          });
+        } catch (error) {
+          console.error(error);
+          releaseFailedAsset(asset, failedBlobUrl);
+          currentGsplatEntity = previousState.entity;
+          currentAsset = previousState.asset;
+          currentBlobUrl = previousState.blobUrl;
+          updateDebugHandles();
+          setSogStatus(
+            'failed',
+            `SOG failed: ${describeError(error)}`,
+            `SOG failed: ${describeError(error)} | Previous map preserved`
+          );
+          reject(error);
+        }
+      });
+
+      asset.once('error', (err) => {
+        if (token !== loadToken) {
+          releaseFailedAsset(asset, failedBlobUrl);
+          reject(new Error(`SOG load superseded: ${displayName}`));
+          return;
+        }
+
+        const message = describeError(err);
+        console.error(err, asset);
+        releaseFailedAsset(asset, failedBlobUrl);
+        currentGsplatEntity = previousState.entity;
+        currentAsset = previousState.asset;
+        currentBlobUrl = previousState.blobUrl;
+        updateDebugHandles();
+        setSogStatus(
+          'failed',
+          `SOG failed: ${message}`,
+          `SOG failed: ${message} | Previous map preserved`
+        );
+        reject(err instanceof Error ? err : new Error(message));
+      });
+
+      app.assets.load(asset);
+    });
+  }
+
+  function loadSogFile(file) {
+    const blobUrl = URL.createObjectURL(file);
+    return loadSplatTransactional({
+      displayName: file.name,
+      url: blobUrl,
+      filename: file.name,
+      size: file.size,
+      failedBlobUrl: blobUrl,
+      detailUrl: file.name
+    });
+  }
+
+  async function probeAsset(url) {
+    const requestOptions = { cache: 'no-store' };
+
+    try {
+      const headResponse = await fetch(url, {
+        ...requestOptions,
+        method: 'HEAD'
+      });
+
+      if (headResponse.ok) {
+        return true;
+      }
+
+      console.warn(`HEAD probe returned ${headResponse.status} for ${url}, falling back to GET probe.`);
+    } catch (error) {
+      console.warn(`HEAD request failed for ${url}`, error);
+    }
+
+    try {
+      const getResponse = await fetch(url, {
+        ...requestOptions,
+        method: 'GET',
+        headers: {
+          Range: 'bytes=0-0'
+        }
+      });
+      return getResponse.ok || getResponse.status === 206;
+    } catch (error) {
+      console.warn(`GET probe failed for ${url}`, error);
+      return false;
+    }
+  }
+
+  async function checkAssetAvailability(url, label) {
+    assetAvailability[url] = 'checking';
+    emitState();
+    const available = await probeAsset(url);
+    assetAvailability[url] = available ? 'available' : 'missing';
+    console.info(`${label}: ${assetAvailability[url]} (${url})`);
+    emitState();
+    return available;
+  }
+
+  async function ensureRemoteAssetAvailable(url, missingMessage) {
+    const available = await checkAssetAvailability(url, url);
+    if (!available) {
+      throw new Error(missingMessage);
+    }
+  }
+
+  async function loadRemoteSog({ path, filename, missingMessage, missingStatusMessage = missingMessage }) {
+    try {
+      await ensureRemoteAssetAvailable(path, missingMessage);
+    } catch (error) {
+      const message = describeError(error);
+      console.error(error);
+      setSogStatus('failed', `SOG failed: ${message}`, `${missingStatusMessage} | Current map preserved`);
+      return false;
+    }
+
+    await loadSplatTransactional({
+      displayName: filename,
+      url: path,
+      filename,
+      detailUrl: path
+    });
+    return true;
+  }
+
+  function releaseContainerAsset(asset) {
+    if (!asset) {
+      return;
+    }
+
+    asset.off();
+    asset.unload();
+    if (app.assets.get(asset.id)) {
+      app.assets.remove(asset);
+    }
+  }
+
+  function loadContainerSceneObject({ id, type, displayName, url, sourceName, transform, visible }) {
+    return new Promise((resolve, reject) => {
+      const asset = new pc.Asset(sourceName || displayName, 'container', {
+        url,
+        filename: sourceName || displayName
+      });
+
+      app.assets.add(asset);
+
+      asset.once('load', () => {
+        try {
+          const entity = asset.resource.instantiateRenderEntity({
+            castShadows: false,
+            receiveShadows: false
+          });
+
+          entity.name = displayName;
+          app.root.addChild(entity);
+
+          sceneObjectManager.addObject({
+            id,
+            name: displayName,
+            displayName,
+            type,
+            entity,
+            asset,
+            transform: getTransformFromEntity(entity),
+            visible: entity.enabled,
+            status: 'loaded',
+            metadata: {
+              url,
+              sourceName: sourceName || displayName
+            }
+          });
+
+          applyTransformToObject(id, transform);
+          sceneObjectManager.setVisible(id, visible);
+          resolve({ id, entity, asset });
+        } catch (error) {
+          releaseContainerAsset(asset);
+          reject(error);
+        }
+      });
+
+      asset.once('error', (err) => {
+        releaseContainerAsset(asset);
+        reject(err instanceof Error ? err : new Error(describeError(err)));
+      });
+
+      app.assets.load(asset);
+    });
+  }
+
+  async function loadModelAssetSceneObject({
+    id,
+    type = 'glb',
+    displayName,
+    url,
+    sourceName,
+    transform = cloneTransform(),
+    visible = true,
+    metadata = {}
+  }) {
+    await ensureRemoteAssetAvailable(
+      url,
+      `Cannot load ${sourceName || displayName || url}`
+    );
+
+    return loadContainerSceneObject({
+      id,
+      type,
+      displayName,
+      url,
+      sourceName,
+      transform,
+      visible
+    }).then((result) => {
+      sceneObjectManager.updateObject(id, {
+        typeLabel: '模型',
+        metadata: {
+          url,
+          sourceName: sourceName || displayName,
+          assetId: metadata.assetId,
+          sourceAssetId: metadata.sourceAssetId,
+          assetType: metadata.assetType ?? type,
+          runtimeType: metadata.runtimeType ?? type,
+          size: metadata.size
+        }
+      });
+
+      selectionManager.select(id);
+      updateStatusMessage(`Added model to scene: ${displayName}`);
+      return result;
+    });
+  }
+
+  async function addAssetToScene(asset) {
+    if (!asset?.id) {
+      throw new Error('Asset is invalid');
+    }
+
+    const runtimeAsset = asset.preferredRuntimeAsset ?? asset;
+    const normalizedType = String(runtimeAsset?.type || '').toLowerCase();
+    const normalizedStatus = String(runtimeAsset?.status || '').toLowerCase();
+    const displayName = runtimeAsset?.sourceName || runtimeAsset?.label || runtimeAsset?.id || asset.sourceName || asset.id;
+    const sourceName = runtimeAsset?.sourceName || displayName;
+
+    if (!runtimeAsset?.url) {
+      throw new Error(`Asset is not runtime-ready: ${asset.sourceName || asset.id}`);
+    }
+
+    if (!['sog', 'gsplat', 'glb', 'gltf'].includes(normalizedType)) {
+      throw new Error(`Asset type not supported yet: ${normalizedType || 'unknown'}`);
+    }
+
+    if (normalizedStatus && !['ready', 'available'].includes(normalizedStatus)) {
+      throw new Error(`Asset is not ready: ${displayName} (${runtimeAsset.status})`);
+    }
+
+    if (Number(runtimeAsset.size ?? 0) <= 0) {
+      throw new Error(`Asset is not ready: ${displayName}`);
+    }
+
+    console.log('[Asset] add to scene started:', asset.id, displayName);
+    if (asset.id !== runtimeAsset.id) {
+      console.log('[Asset] using derived asset:', runtimeAsset.id, runtimeAsset.sourceName || runtimeAsset.id);
+    }
+
+    const metadata = {
+      assetId: runtimeAsset.id,
+      url: runtimeAsset.url,
+      sourceName,
+      sourceAssetId: runtimeAsset.sourceAssetId ?? null,
+      assetType: normalizedType,
+      runtimeType: normalizedType === 'gltf' ? 'glb' : normalizedType,
+      size: runtimeAsset.size
+    };
+
+    if (normalizedType === 'sog' || normalizedType === 'gsplat') {
+      await ensureRemoteAssetAvailable(runtimeAsset.url, `Cannot load ${displayName}`);
+      await loadSplatTransactional({
+        displayName,
+        url: runtimeAsset.url,
+        filename: sourceName,
+        detailUrl: runtimeAsset.url
+      });
+      sceneObjectManager.updateObject(OBJECT_IDS.gsplat, {
+        metadata
+      });
+      selectionManager.select(OBJECT_IDS.gsplat);
+      updateStatusMessage(`Added SOG to scene: ${displayName}`);
+      return { id: OBJECT_IDS.gsplat, type: 'gsplat' };
+    }
+
+    if (normalizedType === 'glb' || normalizedType === 'gltf') {
+      const objectId = `asset-${normalizedType}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+      return loadModelAssetSceneObject({
+        id: objectId,
+        type: 'glb',
+        displayName,
+        url: runtimeAsset.url,
+        sourceName,
+        transform: cloneTransform(),
+        visible: true,
+        metadata
+      });
+    }
+  }
+
+  async function restoreGsplatObject(object) {
+    await ensureRemoteAssetAvailable(
+      object.metadata.url,
+      `Cannot restore ${object.metadata.sourceName || object.displayName}`
+    );
+    await loadSplatTransactional({
+      displayName: object.displayName,
+      url: object.metadata.url,
+      filename: object.metadata.sourceName || object.displayName,
+      detailUrl: object.metadata.url
+    });
+    applyTransformToObject(OBJECT_IDS.gsplat, object.transform);
+    sceneObjectManager.setVisible(OBJECT_IDS.gsplat, object.visible);
+    sceneObjectManager.updateObject(OBJECT_IDS.gsplat, {
+      displayName: object.displayName,
+      name: object.displayName,
+      metadata: {
+        url: object.metadata.url,
+        sourceName: object.metadata.sourceName || object.displayName,
+        assetId: object.metadata.assetId,
+        sourceAssetId: object.metadata.sourceAssetId,
+        assetType: object.metadata.assetType,
+        runtimeType: object.metadata.runtimeType ?? 'gsplat',
+        size: object.metadata.size
+      }
+    });
+  }
+
+  async function restoreBimObject(object) {
+    await ensureRemoteAssetAvailable(
+      object.metadata.url,
+      `Cannot restore ${object.metadata.sourceName || object.displayName}`
+    );
+
+    if (object.metadata.url === ASSET_PATHS.bimProxy) {
+      await loadBim();
+      applyAlignment(object.transform, formatAlignmentStatus(object.transform));
+      sceneObjectManager.updateObject(OBJECT_IDS.bim, {
+        displayName: object.displayName,
+        name: object.displayName,
+        metadata: {
+          url: object.metadata.url,
+          sourceName: object.metadata.sourceName || object.displayName,
+          assetId: object.metadata.assetId,
+          sourceAssetId: object.metadata.sourceAssetId,
+          assetType: object.metadata.assetType,
+          runtimeType: object.metadata.runtimeType ?? 'glb',
+          size: object.metadata.size
+        }
+      });
+      sceneObjectManager.setVisible(OBJECT_IDS.bim, object.visible);
+      return;
+    }
+
+    await loadContainerSceneObject({
+      id: object.id || `restored-bim-${Date.now()}`,
+      type: 'bim-proxy',
+      displayName: object.displayName,
+      url: object.metadata.url,
+      sourceName: object.metadata.sourceName,
+      transform: object.transform,
+      visible: object.visible
+    });
+  }
+
+  function restoreMarkerObject(object) {
+    const [x, y, z] = object.transform.position;
+    const entity = markerManager.placeMarker(new pc.Vec3(x, y - 0.2, z));
+    sceneObjectManager.addObject({
+      id: OBJECT_IDS.marker,
+      name: object.displayName,
+      displayName: object.displayName,
+      type: 'marker',
+      entity,
+      asset: null,
+      transform: getTransformFromEntity(entity),
+      visible: entity.enabled,
+      status: 'active',
+      metadata: {
+        position: `${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}`
+      }
+    });
+    applyTransformToObject(OBJECT_IDS.marker, object.transform);
+    sceneObjectManager.setVisible(OBJECT_IDS.marker, object.visible);
+  }
+
+  function restoreBusinessObject(object) {
+    return createBusinessSceneObject(object.type, {
+      id: object.id,
+      displayName: object.displayName,
+      transform: object.transform,
+      visible: object.visible,
+      metadata: {
+        businessType: object.metadata.businessType,
+        source: object.metadata.source || 'editor-created',
+        placedBy: object.metadata.placedBy,
+        videoProjection: object.metadata.videoProjection
+      }
+    });
+  }
+
+  function getRestorableObjectIds() {
+    return sceneObjectManager.getObjectSnapshots()
+      .filter((object) => RESTORABLE_OBJECT_TYPES.has(object.type) && !object.protected)
+      .map((object) => object.id);
+  }
+
+  function clearRestorableSceneObjects() {
+    const ids = getRestorableObjectIds();
+    ids.forEach((objectId) => {
+      deleteSceneObject(objectId, { suppressLog: true, suppressStatusMessage: true });
+    });
+    selectionManager.clear();
+    closeContextMenu();
+    emitState();
+  }
+
+  async function restoreSceneObjectsFromPayload(objects) {
+    const payloadList = Array.isArray(objects) ? objects.map(normalizeRestoredObjectPayload) : [];
+    let restoredCount = 0;
+
+    pushLog('Restore scene started');
+    clearRestorableSceneObjects();
+
+    for (const payload of payloadList) {
+      if (!RESTORABLE_OBJECT_TYPES.has(payload.type)) {
+        continue;
+      }
+
+      const assetUrl = payload.metadata.url;
+      if (isBlobAssetUrl(assetUrl)) {
+        const skippedMessage = `Skipped local blob asset: ${payload.displayName}`;
+        console.warn('[Restore] skipped local blob asset:', payload.displayName);
+        pushLog(skippedMessage);
+        continue;
+      }
+
+      try {
+        if (payload.type === 'gsplat') {
+          if (!isRestorableAssetUrl(assetUrl)) {
+            throw new Error(`Unsupported gsplat url: ${assetUrl || 'missing'}`);
+          }
+          await restoreGsplatObject(payload);
+        } else if (payload.type === 'bim-proxy') {
+          if (!isRestorableAssetUrl(assetUrl)) {
+            throw new Error(`Unsupported bim url: ${assetUrl || 'missing'}`);
+          }
+          await restoreBimObject(payload);
+        } else if (payload.type === 'glb' || payload.type === 'model') {
+          if (!isRestorableAssetUrl(assetUrl)) {
+            throw new Error(`Unsupported model url: ${assetUrl || 'missing'}`);
+          }
+          await loadModelAssetSceneObject({
+            id: payload.id || `restored-${payload.type}-${Date.now()}-${restoredCount}`,
+            type: payload.type,
+            displayName: payload.displayName,
+            url: assetUrl,
+            sourceName: payload.metadata.sourceName,
+            transform: payload.transform,
+            visible: payload.visible,
+            metadata: {
+              assetId: payload.metadata.assetId,
+              sourceAssetId: payload.metadata.sourceAssetId,
+              assetType: payload.metadata.assetType,
+              runtimeType: payload.metadata.runtimeType,
+              size: payload.metadata.size
+            }
+          });
+        } else if (payload.type === 'marker') {
+          restoreMarkerObject(payload);
+        } else if (BUSINESS_OBJECT_DEFINITIONS[payload.type]) {
+          restoreBusinessObject(payload);
+        }
+
+        restoredCount += 1;
+        console.log('[Restore] restored object:', payload.displayName);
+      } catch (error) {
+        const message = `Restore failed for ${payload.displayName}: ${describeError(error)}`;
+        console.warn('[Restore] object restore failed:', payload.displayName, error);
+        pushLog(message);
+      }
+    }
+
+    pushLog(`Restore scene ok: ${restoredCount} objects`);
+    updateStatusMessage(`Restore scene ok: ${restoredCount} objects`);
+    return { restoredCount };
+  }
+
+  function getEntityWorldAabb(entity) {
+    if (!entity) {
+      return null;
+    }
+
+    const renderComponents = entity.findComponents('render');
+    let result = null;
+    renderComponents.forEach((renderComponent) => {
+      renderComponent.meshInstances.forEach((meshInstance) => {
+        if (!result) {
+          result = meshInstance.aabb.clone();
+        } else {
+          result.add(meshInstance.aabb);
+        }
+      });
+    });
+
+    return result;
+  }
+
+  function focusBim() {
+    if (!bimProxyManager.isLoaded()) {
+      setBimStatus('idle', 'BIM not loaded');
+      return false;
+    }
+
+    const entity = bimProxyManager.getRootEntity();
+    const aabb = getEntityWorldAabb(entity);
+    if (aabb) {
+      cameraController.focusAabb(aabb, {
+        yaw: 0,
+        pitch: 35,
+        minDistance: 10
+      });
+    } else {
+      cameraController.focus(entity.getPosition(), 30, {
+        yaw: 0,
+        pitch: 35
+      });
+    }
+
+    setBimStatus('loaded', statusState.bim.detail, 'Focused BIM');
+    return true;
+  }
+
+  function focusSceneObject(objectId) {
+    const object = sceneObjectManager.getObject(objectId);
+    if (!object) {
+      updateStatusMessage('No selection');
+      return false;
+    }
+
+    if (object.type === 'gsplat') {
+      const focused = focusLoadedMap();
+      if (focused) {
+        updateStatusMessage('Focused map');
+      }
+      return focused;
+    }
+
+    if (object.type === 'bim-proxy') {
+      return focusBim();
+    }
+
+    if (!object.entity) {
+      updateStatusMessage(`${object.displayName ?? object.name} is not available`);
+      return false;
+    }
+
+    const aabb = getEntityWorldAabb(object.entity);
+    if (aabb) {
+      cameraController.focusAabb(aabb, {
+        yaw: 0,
+        pitch: 35,
+        minDistance: 6
+      });
+    } else {
+      cameraController.focus(object.entity.getPosition(), 12, {
+        yaw: 0,
+        pitch: 35
+      });
+    }
+
+    updateStatusMessage(`Focused: ${object.displayName ?? object.name}`);
+    return true;
+  }
+
+  async function copyAlignmentJson() {
+    const json = JSON.stringify(bimAlignmentManager.getCurrent(), null, 2);
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(json);
+        setBimStatus('loaded', 'Alignment JSON copied');
+        return true;
+      }
+
+      console.log(json);
+      setBimStatus('loaded', 'Alignment JSON copied');
+      return true;
+    } catch (error) {
+      console.error(error);
+      setBimStatus('failed', `Copy failed: ${describeError(error)}`);
+      return false;
+    }
+  }
+
+  function applyAlignment(alignment, message) {
+    const sanitized = bimAlignmentManager.setCurrent(alignment);
+    const next = applyTransformToObject(OBJECT_IDS.bim, sanitized, {
+      updateBimAlignment: true
+    });
+
+    if (!next) {
+      setBimStatus('idle', 'BIM not loaded');
+      return false;
+    }
+
+    selectionManager.select(OBJECT_IDS.bim);
+    setBimStatus('loaded', formatAlignmentStatus(next), message ?? formatAlignmentStatus(next));
+    return true;
+  }
+
+  function setAlignmentFromUi(payload) {
+    const targetObject = sceneObjectManager.getObject(selectionManager.getSelectedId());
+    if (!targetObject) {
+      return false;
+    }
+
+    if (!TRANSFORM_EDITABLE_TYPES.has(targetObject.type)) {
+      updateStatusMessage(`${targetObject.displayName ?? targetObject.name} transform is not editable`);
+      return false;
+    }
+
+    const next = sanitizeTransformInput(payload, targetObject.transform ?? getTransformFromEntity(targetObject.entity));
+
+    if (targetObject.type === 'bim-proxy') {
+      return applyAlignment(next);
+    }
+
+    const applied = applyTransformToObject(targetObject.id, next);
+    if (!applied) {
+      return false;
+    }
+
+    updateStatusMessage(`${targetObject.displayName ?? targetObject.name} transform updated`);
+    return true;
+  }
+
+  function nudgeAlignment(kind, axis, direction) {
+    const targetObject = sceneObjectManager.getObject(selectionManager.getSelectedId());
+    if (!targetObject) {
+      return false;
+    }
+
+    if (!TRANSFORM_EDITABLE_TYPES.has(targetObject.type)) {
+      updateStatusMessage(`${targetObject.displayName ?? targetObject.name} transform is not editable`);
+      return false;
+    }
+
+    const next = targetObject.type === 'bim-proxy'
+      ? bimAlignmentManager.getCurrent()
+      : getTransformForObject(targetObject.id);
+    const factor = direction === 'minus' ? -1 : 1;
+
+    if (kind === 'position') {
+      next.position[axis] += factor * state.steps.move;
+    } else if (kind === 'rotation') {
+      next.rotation[axis] += factor * state.steps.rotate;
+    } else if (kind === 'scale') {
+      const value = Math.max(0.001, next.scale[0] + factor * state.steps.scale);
+      next.scale = [value, value, value];
+    }
+
+    if (targetObject.type === 'bim-proxy') {
+      return applyAlignment(next);
+    }
+
+    const applied = applyTransformToObject(targetObject.id, next);
+    if (!applied) {
+      return false;
+    }
+
+    updateStatusMessage(`${targetObject.displayName ?? targetObject.name} transform updated`);
+    return true;
+  }
+
+  function resetAlignment() {
+    const next = bimAlignmentManager.reset();
+    if (!bimProxyManager.resetTransform()) {
+      setBimStatus('idle', 'BIM not loaded');
+      emitState();
+      return false;
+    }
+
+    setBimStatus('loaded', formatAlignmentStatus(next));
+    return true;
+  }
+
+  function loadSavedAlignment({ silent = false } = {}) {
+    try {
+      const saved = bimAlignmentManager.load();
+      const next = saved ?? bimAlignmentManager.setCurrent(DEFAULT_BIM_ALIGNMENT);
+
+      if (!saved && !silent) {
+        setBimStatus('idle', 'BIM alignment reset to default');
+      } else {
+        emitState();
+      }
+
+      return next;
+    } catch (error) {
+      console.warn('Ignoring invalid BIM alignment in localStorage.', error);
+      const next = bimAlignmentManager.reset();
+      if (!silent) {
+        setBimStatus('idle', 'BIM alignment load warning');
+      } else {
+        emitState();
+      }
+      return next;
+    }
+  }
+
+  function saveAlignment(alignment) {
+    const next = bimAlignmentManager.setCurrent(alignment);
+    bimAlignmentManager.save(next);
+    setBimStatus('loaded', 'BIM alignment saved');
+  }
+
+  async function loadBim() {
+    if (bimProxyManager.isLoaded()) {
+      setBimStatus('loaded', `BIM loaded: ${ASSET_LABELS.bimProxy}`, 'BIM already loaded');
+      return true;
+    }
+
+    statusState.bim.state = 'loading';
+    statusState.bim.detail = `BIM loading: ${ASSET_LABELS.bimProxy}`;
+    emitState();
+
+    try {
+      await ensureRemoteAssetAvailable(
+        ASSET_PATHS.bimProxy,
+        `Cannot load ${decodeURI(ASSET_PATHS.bimProxy)}`
+      );
+      const entity = await bimProxyManager.load(ASSET_PATHS.bimProxy);
+      sceneObjectManager.addObject({
+        id: OBJECT_IDS.bim,
+        name: ASSET_LABELS.bimProxy,
+        displayName: ASSET_LABELS.bimProxy,
+        type: 'bim-proxy',
+        entity,
+        asset: bimProxyManager.bimAsset,
+        transform: getTransformFromEntity(entity),
+        visible: entity.enabled,
+        status: 'loaded',
+        metadata: {
+          url: ASSET_PATHS.bimProxy,
+          sourceName: ASSET_LABELS.bimProxy
+        }
+      });
+      const savedAlignment = loadSavedAlignment({ silent: true });
+      selectionManager.select(OBJECT_IDS.bim);
+      applyAlignment(savedAlignment, formatAlignmentStatus(savedAlignment));
+      return true;
+    } catch (error) {
+      console.error(error);
+      setBimStatus('failed', `BIM failed: ${describeError(error)}`);
+      return false;
+    }
+  }
+
+  function toggleObjectVisibility(objectId) {
+    const object = sceneObjectManager.getObject(objectId);
+    if (!object || !object.canHide) {
+      return false;
+    }
+
+    if (!object.entity) {
+      updateStatusMessage(`${object.name} is not available`);
+      return false;
+    }
+
+    const changed = sceneObjectManager.toggleVisible(objectId);
+    if (!changed) {
+      return false;
+    }
+
+    const nextObject = sceneObjectManager.getObject(objectId);
+    updateStatusMessage(`${nextObject.name} ${nextObject.visible ? 'visible' : 'hidden'}`);
+    return true;
+  }
+
+  function openContextMenu(objectId, x, y) {
+    const object = sceneObjectManager.getObject(objectId);
+    if (!object) {
+      return;
+    }
+
+    selectionManager.select(objectId);
+    const nextPosition = clampMenuPosition(x, y);
+    state.contextMenu = {
+      open: true,
+      objectId,
+      x: nextPosition.x,
+      y: nextPosition.y
+    };
+    emitState();
+  }
+
+  function closeContextMenu() {
+    if (!state.contextMenu.open) {
+      return;
+    }
+
+    state.contextMenu = {
+      open: false,
+      objectId: null,
+      x: 0,
+      y: 0
+    };
+    emitState();
+  }
+
+  function deleteSceneObject(objectId, options = {}) {
+    const object = sceneObjectManager.getObject(objectId);
+    if (!object) {
+      return false;
+    }
+
+    if (object.protected) {
+      console.warn('[SceneObjectManager] protected object cannot be deleted:', object.id);
+      updateStatusMessage(`${object.displayName ?? object.name} cannot be deleted`);
+      return false;
+    }
+
+    const suppressLog = Boolean(options.suppressLog);
+    const suppressStatusMessage = Boolean(options.suppressStatusMessage);
+
+    if (!suppressLog) {
+      console.log('[ContextMenu] delete object:', object.id, object.displayName ?? object.name);
+    }
+
+    if (object.id === OBJECT_IDS.marker) {
+      markerManager.clearMarker();
+    }
+
+    if (object.id === OBJECT_IDS.gsplat) {
+      destroySplatState(getCurrentSplatState());
+      currentGsplatEntity = null;
+      currentAsset = null;
+      currentBlobUrl = null;
+      updateDebugHandles();
+    }
+
+    if (object.id === OBJECT_IDS.bim) {
+      bimProxyManager.unload();
+    }
+
+    if (object.type === 'cameraDevice') {
+      if (activeProjectorCameraId === object.id) {
+        destroyActiveMp4Projector();
+        activeProjectorCameraId = null;
+      }
+    }
+
+    if (
+      object.id !== OBJECT_IDS.bim &&
+      (object.type === 'glb' || object.type === 'model' || object.type === 'bim-proxy') &&
+      object.asset
+    ) {
+      releaseContainerAsset(object.asset);
+    }
+
+    const removed = sceneObjectManager.removeObject(objectId);
+    if (!removed) {
+      updateStatusMessage(`Delete failed: ${object.displayName ?? object.name}`);
+      return false;
+    }
+
+    if (selectionManager.getSelectedId() === objectId) {
+      selectionManager.clear();
+    }
+
+    if (object.id === OBJECT_IDS.gsplat) {
+      statusState.sog.state = 'idle';
+      statusState.sog.detail = 'SOG removed from scene';
+    }
+
+    if (object.id === OBJECT_IDS.bim) {
+      statusState.bim.state = 'idle';
+      statusState.bim.detail = 'BIM removed from scene';
+    }
+
+    closeContextMenu();
+    if (!suppressStatusMessage) {
+      updateStatusMessage(`${object.displayName ?? object.name} removed from scene`);
+    } else {
+      emitState();
+    }
+    return true;
+  }
+
+  function renameSelectedObject(nextName) {
+    const selectedId = selectionManager.getSelectedId();
+    if (!selectedId) {
+      updateStatusMessage('未选择对象');
+      return false;
+    }
+
+    const object = sceneObjectManager.getObject(selectedId);
+    const trimmed = nextName.trim();
+    if (!object) {
+      return false;
+    }
+
+    if (!trimmed) {
+      updateStatusMessage('名称不能为空');
+      return false;
+    }
+
+    const previousName = object.displayName ?? object.name;
+    sceneObjectManager.updateObject(selectedId, {
+      displayName: trimmed,
+      name: trimmed
+    });
+
+    const currentObject = sceneObjectManager.getObject(selectedId);
+    if (currentObject?.entity) {
+      currentObject.entity.name = trimmed;
+    }
+
+    updateStatusMessage(`已重命名: ${previousName} -> ${trimmed}`);
+    return true;
+  }
+
+  async function enableCameraVideoProjection(cameraId = 'camera_0', options = {}) {
+    let cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject) {
+      createBusinessSceneObject('cameraDevice', {
+        id: cameraId,
+        displayName: cameraId
+      });
+      cameraObject = sceneObjectManager.getObject(cameraId);
+    }
+
+    const videoUrl = options.videoUrl || cameraObject.metadata?.videoProjection?.videoUrl || '/assets/test.mp4';
+    ensureMp4ProjectorForCamera(cameraId, {
+      enabled: true,
+      videoUrl,
+      opacity: readNumberValue(options.opacity, cameraObject.metadata?.videoProjection?.opacity ?? 1),
+      softEdge: readNumberValue(options.softEdge, cameraObject.metadata?.videoProjection?.softEdge ?? 0.05),
+      flipY: options.flipY ?? cameraObject.metadata?.videoProjection?.flipY ?? false
+    });
+
+    console.log('[Projection] enableCameraVideoProjection', {
+      cameraId,
+      resolvedVideoUrl: videoUrl
+    });
+    updateStatusMessage(`Projection enabled: ${cameraId}`);
+    return {
+      cameraId
+    };
+  }
+
+  function syncSteps(nextSteps) {
+    state.steps.move = Math.max(0.001, readNumberValue(nextSteps.move, state.steps.move));
+    state.steps.rotate = Math.max(0.001, readNumberValue(nextSteps.rotate, state.steps.rotate));
+    state.steps.scale = Math.max(0.001, readNumberValue(nextSteps.scale, state.steps.scale));
+    emitState();
+  }
+
+  function addSceneObjectByType(type) {
+    if (type === 'empty') {
+      return createBusinessSceneObject(type);
+    }
+
+    startPlacementMode(type);
+    return null;
+  }
+
+  async function handleToolbarAction(action, payload = null) {
+    switch (action) {
+      case 'load-base':
+        await loadRemoteSog({
+          path: ASSET_PATHS.baseSog,
+          filename: ASSET_LABELS.baseSog,
+          missingMessage: `Cannot load ${ASSET_PATHS.baseSog}`
+        });
+        return;
+      case 'load-converted':
+        await loadRemoteSog({
+          path: ASSET_PATHS.convertedSog,
+          filename: ASSET_LABELS.convertedSog,
+          missingMessage: `Converted SOG missing: ${ASSET_PATHS.convertedSog}`,
+          missingStatusMessage: `Converted SOG missing: ${ASSET_PATHS.convertedSog}`
+        });
+        return;
+      case 'load-bim':
+        await loadBim();
+        return;
+      case 'toggle-bim':
+        if (!sceneObjectManager.getObject(OBJECT_IDS.bim)) {
+          setBimStatus('idle', 'BIM Proxy not loaded');
+          return;
+        }
+        toggleObjectVisibility(OBJECT_IDS.bim);
+        return;
+      case 'debug-bim': {
+        const object = sceneObjectManager.getObject(OBJECT_IDS.debug);
+        if (!object) {
+          updateStatusMessage('Debug Helpers not available');
+          return;
+        }
+        toggleObjectVisibility(OBJECT_IDS.debug);
+        return;
+      }
+      case 'clear-marker':
+        pickingController.clearMarker();
+        return;
+      case 'reset-camera':
+        cameraController.reset();
+        updateStatusMessage('Camera reset');
+        return;
+      case 'load-local-sog':
+        if (payload) {
+          loadSogFile(payload);
+        }
+        return;
+      case 'hierarchy-delete': {
+        const selectedId = selectionManager.getSelectedId();
+        if (!selectedId) {
+          updateStatusMessage('No selection');
+          return;
+        }
+        deleteSceneObject(selectedId);
+        return;
+      }
+      case 'hierarchy-duplicate':
+        updateStatusMessage('Duplicate not implemented');
+        return;
+      case 'hierarchy-more':
+        updateStatusMessage('More menu not implemented');
+        return;
+      default:
+        updateStatusMessage(`${action} not implemented`);
+    }
+  }
+
+  function handleHierarchySelect(objectId) {
+    const selected = sceneObjectManager.getObject(objectId);
+    if (!selected) {
+      return false;
+    }
+
+    console.log('[Hierarchy] select object:', objectId, selected.displayName ?? selected.name, selected.type);
+    selectionManager.select(objectId);
+    updateStatusMessage(`Selected: ${selected.displayName ?? selected.name}`);
+    return true;
+  }
+
+  function handleAssetSelect(assetId) {
+    if (assetId === 'converted-sog' && assetAvailability[ASSET_PATHS.convertedSog] !== 'available') {
+      updateStatusMessage(`Converted SOG missing: ${ASSET_PATHS.convertedSog}`);
+      return false;
+    }
+
+    if (assetId === OBJECT_IDS.gsplat && sceneObjectManager.getObject(OBJECT_IDS.gsplat)) {
+      return selectionManager.select(OBJECT_IDS.gsplat);
+    }
+
+    if (assetId === OBJECT_IDS.bim && sceneObjectManager.getObject(OBJECT_IDS.bim)) {
+      return selectionManager.select(OBJECT_IDS.bim);
+    }
+
+    return false;
+  }
+
+  function handleContextMenuAction(action) {
+    const objectId = state.contextMenu.objectId;
+    if (!objectId) {
+      closeContextMenu();
+      return;
+    }
+
+    if (action === 'toggle-visible') {
+      toggleObjectVisibility(objectId);
+      closeContextMenu();
+      return;
+    }
+
+    if (action === 'delete-object') {
+      deleteSceneObject(objectId);
+      return;
+    }
+
+    closeContextMenu();
+  }
+
+  function handleInspectorAction(action, payload = null) {
+    switch (action) {
+      case 'rename':
+        renameSelectedObject(payload ?? '');
+        return;
+      case 'set-steps':
+        syncSteps(payload ?? {});
+        return;
+      case 'apply-alignment':
+        setAlignmentFromUi(payload ?? {});
+        return;
+      case 'reset-alignment':
+        resetAlignment();
+        return;
+      case 'save-alignment':
+        saveAlignment(payload ?? bimAlignmentManager.getCurrent());
+        return;
+      case 'load-alignment': {
+        const next = loadSavedAlignment();
+        if (bimProxyManager.isLoaded()) {
+          applyAlignment(next, 'BIM alignment loaded');
+        } else {
+          setBimStatus('idle', 'BIM not loaded');
+        }
+        return;
+      }
+      case 'focus-bim':
+        focusBim();
+        return;
+      case 'focus-map':
+        focusLoadedMap();
+        updateStatusMessage('Focused map');
+        return;
+      case 'focus-selected': {
+        const selectedId = selectionManager.getSelectedId();
+        if (!selectedId) {
+          updateStatusMessage('No selection');
+          return;
+        }
+        focusSceneObject(selectedId);
+        return;
+      }
+      case 'copy-alignment-json':
+        copyAlignmentJson();
+        return;
+      case 'clear-marker':
+        pickingController.clearMarker();
+        return;
+      case 'focus-marker':
+        if (!markerManager.marker) {
+          updateStatusMessage('Marker not available');
+          return;
+        }
+        cameraController.focus(markerManager.marker.getPosition(), 12, {
+          yaw: 0,
+          pitch: 35
+        });
+        updateStatusMessage('Focused marker');
+        return;
+      case 'reset-camera':
+        cameraController.reset();
+        updateStatusMessage('Camera reset');
+        return;
+      case 'toggle-debug':
+        toggleObjectVisibility(OBJECT_IDS.debug);
+        return;
+      case 'nudge-position':
+        nudgeAlignment('position', payload.axis, payload.direction);
+        return;
+      case 'nudge-rotation':
+        nudgeAlignment('rotation', payload.axis, payload.direction);
+        return;
+      case 'nudge-scale':
+        nudgeAlignment('scale', 0, payload.direction);
+        return;
+      case 'delete-selected': {
+        const selectedId = selectionManager.getSelectedId();
+        if (selectedId) {
+          deleteSceneObject(selectedId);
+        }
+        return;
+      }
+      case 'reload-base':
+        loadRemoteSog({
+          path: ASSET_PATHS.baseSog,
+          filename: ASSET_LABELS.baseSog,
+          missingMessage: `Cannot load ${ASSET_PATHS.baseSog}`
+        });
+        return;
+      case 'bind-test-video': {
+        const selectedId = selectionManager.getSelectedId();
+        if (!selectedId) {
+          updateStatusMessage('No selection');
+          return;
+        }
+        enableCameraVideoProjection(selectedId, { videoUrl: '/assets/test.mp4' })
+          .then(() => {
+            console.log('[Projection] resolvedVideoUrl:', '/assets/test.mp4');
+            updateStatusMessage('Test video bound: /assets/test.mp4');
+          })
+          .catch((error) => {
+            console.warn('[Projection] bind test video failed:', error);
+            updateStatusMessage(`Bind test video failed: ${describeError(error)}`);
+          });
+        return;
+      }
+      case 'toggle-projection-enabled': {
+        const selectedId = selectionManager.getSelectedId();
+        if (!selectedId) {
+          updateStatusMessage('No selection');
+          return;
+        }
+        const target = sceneObjectManager.getObject(selectedId);
+        const nextEnabled = !target?.metadata?.videoProjection?.enabled;
+        if (activeProjectorCameraId === selectedId && activeMp4Projector) {
+          activeMp4Projector.patch({ enabledProjection: nextEnabled });
+        } else if (nextEnabled) {
+          ensureMp4ProjectorForCamera(selectedId, {
+            enabled: true,
+            videoUrl: target?.metadata?.videoProjection?.videoUrl || '/assets/test.mp4',
+            opacity: target?.metadata?.videoProjection?.opacity ?? 1,
+            softEdge: target?.metadata?.videoProjection?.softEdge ?? 0.05,
+            flipY: target?.metadata?.videoProjection?.flipY ?? false
+          });
+        }
+        syncCameraProjectionMetadata(selectedId, { enabled: nextEnabled });
+        updateStatusMessage(`${target?.displayName ?? selectedId} projection ${nextEnabled ? 'enabled' : 'disabled'}`);
+        return;
+      }
+      case 'start-four-point-calibration': {
+        updateStatusMessage('4-point calibration is replaced by projector transform demo. Move/rotate the 摄像头 object directly.');
+        return;
+      }
+      case 'finish-four-point-calibration': {
+        updateStatusMessage('No finish step is needed in the new projector demo.');
+        return;
+      }
+      case 'clear-four-point-calibration': {
+        updateStatusMessage('No calibration state to clear in the new projector demo.');
+        return;
+      }
+      case 'update-video-projection': {
+        const selectedId = selectionManager.getSelectedId();
+        if (!selectedId) {
+          updateStatusMessage('No selection');
+          return;
+        }
+        const target = sceneObjectManager.getObject(selectedId);
+        const nextProjection = syncCameraProjectionMetadata(selectedId, payload ?? {});
+        if (!target || !nextProjection) {
+          updateStatusMessage('Camera device not found');
+          return;
+        }
+        if (activeProjectorCameraId === selectedId && activeMp4Projector) {
+          activeMp4Projector.patch({
+            gsplatEntity: currentGsplatEntity,
+            projectorEntity: target.entity,
+            videoUrl: nextProjection.videoUrl,
+            opacity: nextProjection.opacity,
+            softEdge: nextProjection.softEdge,
+            flipY: nextProjection.flipY,
+            enabledProjection: nextProjection.enabled
+          });
+        } else if (nextProjection.enabled && nextProjection.videoUrl) {
+          ensureMp4ProjectorForCamera(selectedId, nextProjection);
+        }
+        updateStatusMessage('Projection updated');
+        return;
+      }
+      default:
+        updateStatusMessage(`${action} not implemented`);
+    }
+  }
+
+  const gsplatPointPicker = new GsplatPointPicker({
+    app,
+    cameraEntity: camera,
+    getSplatEntity: () => currentGsplatEntity,
+    pickerScale: 1,
+    logResult: false
+  });
+
+  const pickingController = new PickingController({
+    app,
+    canvas,
+    camera,
+    bimProxyManager,
+    markerManager,
+    gsplatPointPicker,
+    pickBusinessObject,
+    onBusinessObjectPick: (hit) => {
+      selectionManager.select(hit.objectId);
+      updateStatusMessage(`Selected object: ${hit.object.displayName ?? hit.object.name}`);
+    },
+    onGsplatPick: (hit) => {
+      const markerEntity = markerManager.marker;
+      if (markerEntity) {
+        sceneObjectManager.addObject({
+          id: OBJECT_IDS.marker,
+          name: markerEntity.name,
+          displayName: markerEntity.name,
+          type: 'marker',
+          entity: markerEntity,
+          asset: null,
+          visible: markerEntity.enabled,
+          status: 'active',
+          metadata: {
+            position: `${hit.worldPoint.x.toFixed(2)}, ${hit.worldPoint.y.toFixed(2)}, ${hit.worldPoint.z.toFixed(2)}`
+          }
+        });
+      }
+
+      if (placementMode?.type) {
+        placeBusinessObjectAt(placementMode.type, hit.worldPoint);
+        return;
+      }
+
+      console.debug(`[Pick] gsplat success: ${formatPointLog(hit.worldPoint)}`);
+      setPickStatus('picked', `GSplat point picked: ${formatPointLog(hit.worldPoint)}`);
+    },
+    onFallbackPick: (hit) => {
+      const markerEntity = markerManager.marker;
+      if (markerEntity) {
+        sceneObjectManager.addObject({
+          id: OBJECT_IDS.marker,
+          name: markerEntity.name,
+          displayName: markerEntity.name,
+          type: 'marker',
+          entity: markerEntity,
+          asset: null,
+          visible: markerEntity.enabled,
+          status: 'active',
+          metadata: {
+            position: `${hit.point.x.toFixed(2)}, ${hit.point.y.toFixed(2)}, ${hit.point.z.toFixed(2)}`
+          }
+        });
+      }
+
+      console.debug(`[Pick] fallback plane used: ${formatPointLog(hit.point)}`);
+      if (placementMode?.type) {
+        console.debug('[Placement] requires gsplat pick, fallback ignored');
+        setPickStatus('warning', `Fallback plane picked: ${formatPointLog(hit.point)}`, 'Placement requires gsplat pick, fallback ignored');
+      } else {
+        setPickStatus('picked', `Fallback plane picked: ${formatPointLog(hit.point)}`);
+      }
+    },
+    onClear: () => {
+      sceneObjectManager.removeObject(OBJECT_IDS.marker);
+      setPickStatus('ready', 'Ready');
+    }
+  });
+
+  sceneObjectManager.subscribe(() => {
+    emitState();
+  });
+
+  selectionManager.subscribe((selectionId, selected) => {
+    if (selected) {
+      pushLog(`Selected: ${selected.name}`);
+    }
+    if (!selectionId) {
+      closeContextMenu();
+      emitState();
+      return;
+    }
+    emitState();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      if (cancelPlacementMode()) {
+        return;
+      }
+      closeContextMenu();
+      return;
+    }
+
+    if (event.key !== 'Delete') {
+      return;
+    }
+
+    const active = document.activeElement;
+    const tag = active?.tagName?.toLowerCase();
+    const isEditingText =
+      tag === 'input' ||
+      tag === 'textarea' ||
+      active?.isContentEditable;
+
+    if (isEditingText) {
+      return;
+    }
+
+    const selectedId = selectionManager.getSelectedId();
+    if (!selectedId) {
+      return;
+    }
+
+    const object = sceneObjectManager.getObject(selectedId);
+    if (!object || object.protected) {
+      return;
+    }
+
+    deleteSceneObject(selectedId);
+  });
+
+  window.addEventListener('resize', closeContextMenu);
+  window.addEventListener('scroll', closeContextMenu, true);
+  document.addEventListener('pointerdown', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      closeContextMenu();
+      return;
+    }
+
+    if (!target.closest('.context-menu')) {
+      closeContextMenu();
+    }
+
+  });
+
+  Promise.all([
+    checkAssetAvailability(ASSET_PATHS.baseSog, ASSET_LABELS.baseSog),
+    checkAssetAvailability(ASSET_PATHS.convertedSog, 'converted/map.sog'),
+    checkAssetAvailability(ASSET_PATHS.bimProxy, ASSET_LABELS.bimProxy)
+  ]).then(([baseAvailable, convertedAvailable, bimAvailable]) => {
+    console.info(
+      `Asset availability summary: base.sog=${baseAvailable ? 'available' : 'missing'}, converted/map.sog=${convertedAvailable ? 'available' : 'missing'}, ${ASSET_LABELS.bimProxy}=${bimAvailable ? 'available' : 'missing'}`
+    );
+    updateStatusMessage('Asset checks complete');
+  });
+
+  app.on('update', () => {
+    activeMp4Projector?.update();
+  });
+
+  if (!sceneObjectManager.getObject('camera_0')) {
+    createBusinessSceneObject('cameraDevice', {
+      id: 'camera_0',
+      displayName: 'camera_0'
+    });
+  }
+
+  loadSavedAlignment({ silent: true });
+  updateDebugHandles();
+  resizeViewport();
+  flushState();
+
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      listener(buildRuntimeSnapshot());
+      return () => listeners.delete(listener);
+    },
+    getSnapshot() {
+      return buildRuntimeSnapshot();
+    },
+    getSceneObjectSnapshots() {
+      return sceneObjectManager.getObjectSnapshots();
+    },
+    setUploadedAssets,
+    restoreSceneObjectsFromPayload,
+    addSceneObjectByType,
+    OBJECT_IDS,
+    handleToolbarAction,
+    handleHierarchySelect,
+    handleAssetSelect,
+    handleInspectorAction,
+    handleContextMenuAction,
+    addAssetToScene,
+    toggleObjectVisibility,
+    openContextMenu,
+    closeContextMenu,
+    enableCameraVideoProjection,
+    testVideoPreviewPlane(videoUrl = '/assets/test.mp4') {
+      return enableCameraVideoProjection('camera_0', { videoUrl });
+    },
+    loadBim,
+    loadRemoteSog,
+    loadSogFile
+  };
+}

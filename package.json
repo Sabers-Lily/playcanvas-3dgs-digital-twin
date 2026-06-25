@@ -1,17 +1,15 @@
 {
-  "name": "playcanvas-gsplat-local-viewer",
+  "name": "playcanvas-3dgs-digital-twin",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "playcanvas": "^2.19.7"
-  },
-  "devDependencies": {
-    "vite": "^7.0.0"
+    "dev": "cmd /c pnpm -r --parallel dev",
+    "dev:web": "cmd /c pnpm --filter web dev",
+    "dev:api": "cmd /c pnpm --filter api dev",
+    "build": "cmd /c pnpm -r build",
+    "build:web": "cmd /c pnpm --filter web build",
+    "build:api": "cmd /c pnpm --filter api build",
+    "convert:ply": "node scripts/convert-ply-to-sog.mjs"
   }
 }

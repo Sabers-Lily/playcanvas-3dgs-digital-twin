@@ -1,111 +1,366 @@
 # AGENTS.md
 
-## Project Identity
+## 1. Project Identity
 
-This project is a local/private 3DGS digital twin platform based on PlayCanvas Engine.
+This project is a local/private full-stack 3DGS digital twin platform.
 
-The current working foundation is a local PlayCanvas/Vite viewer that can load and display a `.sog` 3DGS map from:
+It is no longer just a standalone PlayCanvas viewer. The product direction is a browser-based digital twin Mini Editor and runtime platform built around:
+
+* 3DGS `.sog` maps as the visual base layer
+* BIM / GLB proxy geometry for interaction and structure
+* Scene objects managed through frontend editor state
+* Backend APIs for future persistence, assets, entities, and realtime integration
+
+The current repository is a monorepo and should be treated as one product with distinct frontend, backend, and shared-contract boundaries.
+
+---
+
+## 2. Current Development Stage
+
+The project has entered a full-stack monorepo stage.
+
+Current status:
+
+* `apps/web` is the active frontend app
+* `apps/api` is the active backend skeleton
+* `packages/shared` is the shared constants / schema / contract package
+
+Backend development is now allowed.
+
+However:
+
+* backend work must still be incremental
+* frontend viewer/editor stability still matters
+* database, auth, upload, websocket, mqtt, and deployment infrastructure must only be introduced when a task explicitly asks for them
+
+Do not assume the next step must be a large architecture rewrite.
+
+---
+
+## 3. Monorepo Structure
+
+Recommended repository structure:
 
 ```text
-public/assets/base.sog
+playcanvas-3dgs-digital-twin
+├─ apps
+│  ├─ web
+│  │  ├─ public
+│  │  │  └─ assets
+│  │  ├─ src
+│  │  │  ├─ components
+│  │  │  ├─ runtime
+│  │  │  ├─ engine
+│  │  │  ├─ editor
+│  │  │  ├─ api
+│  │  │  ├─ config
+│  │  │  ├─ App.vue
+│  │  │  └─ main.js
+│  │  ├─ package.json
+│  │  └─ vite.config.js
+│  └─ api
+│     ├─ src
+│     │  ├─ modules
+│     │  │  ├─ health
+│     │  │  ├─ scenes
+│     │  │  ├─ assets
+│     │  │  ├─ entities
+│     │  │  ├─ devices
+│     │  │  ├─ robots
+│     │  │  ├─ cameras
+│     │  │  ├─ routes
+│     │  │  └─ realtime
+│     │  ├─ main.js
+│     │  └─ app.module.js
+│     └─ package.json
+├─ packages
+│  └─ shared
+│     ├─ src
+│     │  ├─ scene.js
+│     │  ├─ assets.js
+│     │  ├─ entities.js
+│     │  ├─ api.js
+│     │  └─ constants.js
+│     └─ package.json
+├─ docs
+├─ scripts
+├─ package.json
+├─ pnpm-workspace.yaml
+└─ README.md
 ```
 
-The long-term product goal is not just a viewer. The goal is to build a browser-based 3D digital twin editor and runtime platform where:
+Rules:
 
-* 3DGS maps are used as the realistic visual base layer.
-* Proxy meshes are used for click detection, collision, placement, routing, and navigation.
-* Extra models such as GLB, GLTF, OBJ, and PLY can be placed on top of the 3DGS map.
-* Buildings, roads, robots, cameras, devices, sensors, annotations, and routes can become interactive business entities.
-* Realtime camera, robot, and sensor data can update the map state.
-* Scene configuration, assets, object transforms, routes, and device bindings can eventually be saved to a backend/database.
+* `apps/web` is the only formal frontend app entry
+* `apps/api` is the only formal backend app entry
+* `packages/shared` is the place for shared contracts and constants
+* Do not keep working from old root-level frontend copies such as `src`, `public`, `index.html`, or `vite.config.js`
+* Do not put backend code inside `apps/web/src`
+* Do not put PlayCanvas runtime code inside `apps/api`
 
-## Core Architecture Principle
+If the repository has not been fully migrated yet, migrate gradually and do not break current `apps/web` functionality while restructuring.
+
+---
+
+## 4. Frontend App Rules: apps/web
+
+`apps/web` is the Vue + Vite + PlayCanvas frontend.
+
+Responsibilities:
+
+* Vue controls UI
+* PlayCanvas controls the 3D runtime
+* `SceneObjectManager` controls scene object state
+* `SelectionManager` controls selection state
+
+Required frontend guarantees:
+
+* `base.sog` loading must not break
+* local `.sog` loading must pass `filename`
+* GLB / BIM loading must not break
+* the canvas must fill only the 中间视口
+* 左侧层级 and 右侧属性 must remain synchronized
+* transform editing must update both the PlayCanvas entity and `SceneObjectManager`
+
+Do not move backend logic into Vue components.
+
+Do not create a second source of truth for scene objects inside Vue state.
+
+---
+
+## 5. Backend App Rules: apps/api
+
+`apps/api` is the backend application.
+
+Preferred backend direction:
+
+* Node.js + NestJS preferred
+* Express / Fastify acceptable only for very small skeletons or prototypes
+
+Early backend work may include:
+
+* `GET /health`
+* `GET /api/health`
+* `GET /api/version`
+* basic scenes API skeleton
+* basic assets API skeleton
+* basic entities API skeleton
+
+Do not introduce these by default unless the task explicitly asks for them:
+
+* PostgreSQL
+* Prisma / TypeORM
+* Redis
+* MinIO
+* MQTT
+* WebSocket
+* auth
+* file upload
+* camera streaming
+* Docker deployment
+
+Suggested module layout:
+
+```text
+apps/api/src/modules
+├─ health
+├─ scenes
+├─ assets
+├─ entities
+├─ devices
+├─ robots
+├─ cameras
+├─ routes
+└─ realtime
+```
+
+Backend rules:
+
+* APIs must return structured JSON
+* use stable IDs
+* do not use `displayName` as an ID
+* do not mix static scene configuration with realtime state
+* do not return random internal implementation fields as external contract
+
+---
+
+## 6. Shared Package Rules: packages/shared
+
+`packages/shared` is for shared constants, schemas, and future API contracts.
+
+Use it for:
+
+* scene object types
+* asset types
+* API version constants
+* request / response schemas
+* future TypeScript types
+* future validation schemas
+
+JavaScript is still acceptable at the current stage.
+
+Do not force a TypeScript migration just to create shared code.
+
+Example:
+
+```js
+export const API_VERSION = '0.1.0';
+
+export const SCENE_OBJECT_TYPES = {
+  GSPLAT: 'gsplat',
+  BIM_PROXY: 'bim-proxy',
+  GLB: 'glb',
+  MODEL: 'model',
+  MARKER: 'marker',
+  CAMERA: 'camera',
+  DEBUG: 'debug'
+};
+```
+
+Rules:
+
+* if both frontend and backend need a constant or schema, place it in `packages/shared`
+* do not duplicate scene object type strings across multiple apps
+* shared contracts must remain serializable and runtime-agnostic
+
+---
+
+## 7. UI Naming Rules
+
+Use these Chinese UI names consistently in user-facing requirements and implementation notes:
+
+```text
+Hierarchy = 层级
+Inspector = 属性
+Assets = 资源
+Logs = 日志
+Viewport = 视口
+Toolbar = 工具栏
+Context Menu = 右键菜单
+Scene Object = 场景对象
+SceneObjectManager = 场景对象管理器
+SelectionManager = 选择管理器
+```
+
+Preferred phrasing:
+
+```text
+左侧层级
+右侧属性
+底部资源 / 日志
+中间视口
+顶部工具栏
+对象右键菜单
+```
+
+Avoid mixed wording such as:
+
+```text
+Hierarchy 面板
+Inspector 面板
+Assets 面板
+Logs 面板
+```
+
+Code identifiers may remain English.
+
+---
+
+## 8. Core Architecture Principle
 
 Always separate these layers:
 
 ```text
-3DGS Layer
-- Visual base map only.
-- Usually loaded from .sog.
-- Do not treat it as a normal editable mesh.
+Visual Layer
+- 3DGS `.sog` map
+- High realism
+- Visual base map
 
-Proxy Mesh Layer
-- Hidden or debug-visible simplified geometry.
-- Used for raycast, click, collision, path placement, navigation, and object snapping.
+Interaction Layer
+- BIM / GLB proxy mesh
+- Raycast mesh
+- Collision mesh
+- Ground picking plane
 
-Editable Object Layer
-- GLB / GLTF / OBJ / PLY models.
-- Buildings, devices, robots, cameras, signs, annotations, hotspots, and regions.
-- These objects are independent entities and must be saved as scene data.
+Entity Layer
+- Buildings
+- Roads
+- Cameras
+- Robots
+- Devices
+- Markers
+- Annotations
 
-Business / Realtime Layer
-- Robot positions.
-- Camera streams.
-- Sensor state.
-- Alarm state.
-- Route state.
-- External system data.
+Editor State Layer
+- SceneObjectManager
+- SelectionManager
+- Visibility
+- Rename
+- Delete
+- Transform
 
-Persistence Layer
-- Scene JSON now.
-- Backend API and database later.
+Backend Layer
+- REST APIs
+- persistence
+- asset records
+- realtime integration later
 ```
 
-Do not directly modify the `.sog` file to represent business changes. Business changes must be represented by independent scene objects, metadata, and realtime state.
+Important principles:
 
-## Current Technology Stack
+* 3DGS is the visual layer
+* BIM / GLB / proxy geometry is the interaction layer
+* Vue is the UI shell
+* PlayCanvas is the 3D runtime
+* backend handles persistence and API boundaries
+* database, when added later, stores durable records, not PlayCanvas runtime objects
 
-Current frontend:
+---
 
-* Vite
-* JavaScript now, TypeScript later
-* PlayCanvas Engine
-* Local static assets under `public/assets`
-* Browser-based viewer/editor
+## 9. Scene Object / Entity Rules
 
-Future frontend direction:
+`SceneObjectManager` is the frontend scene object state source.
 
-* TypeScript
-* React or Vue only when the UI complexity requires it
-* PlayCanvas Engine as the 3D runtime
-* PCUI or custom UI for editor panels
-* WebSocket client for realtime updates
-* MQTT-over-WebSocket only when direct browser subscription is needed
-* Web Workers for heavy file parsing or preprocessing
+`SelectionManager` is the frontend selection source.
 
-Future backend direction:
+Rules:
 
-* Node.js + NestJS preferred
-* Python FastAPI acceptable for data/AI/prototype services
-* PostgreSQL + PostGIS for persistent project, scene, asset, route, and spatial data
-* Redis for realtime state and cache
-* MinIO / S3 / local storage for large asset files
-* WebSocket Gateway for browser realtime push
-* MQTT Broker for robot, camera, and IoT integration
-* FFmpeg / media server for RTSP camera conversion when needed
-* Docker Compose for private/local deployment
+* every scene object must have a stable `id`
+* do not use `displayName` as identity
+* rename only changes display fields, not source file paths
+* visibility changes must affect the real PlayCanvas entity
+* transform changes must affect both serializable state and the real entity
+* deleting a scene object must not delete physical asset files unless explicitly requested
 
-## Repository Rules
+Serializable scene object example:
 
-Keep the project runnable after every meaningful change.
-
-Do not break the existing `.sog` loading capability.
-
-Do not hardcode Windows absolute paths such as:
-
-```text
-D:\xxx\xxx.sog
+```json
+{
+  "id": "object_001",
+  "type": "gsplat",
+  "displayName": "base.sog",
+  "visible": true,
+  "transform": {
+    "position": [0, 0, 0],
+    "rotation": [0, 0, 0],
+    "scale": [1, 1, 1]
+  },
+  "metadata": {
+    "url": "/assets/base.sog",
+    "sourceName": "base.sog"
+  }
+}
 ```
 
-Use project-relative or server-relative URLs such as:
+---
 
-```text
-/assets/base.sog
-```
+## 10. PlayCanvas / 3DGS Rules
 
-When loading local user-selected files, use `URL.createObjectURL(file)` and pass file metadata to PlayCanvas assets.
+Preserve existing PlayCanvas and `.sog` rules.
 
-When loading `.sog`, always provide `filename`:
+For `.sog` loading, always pass `filename`.
+
+Correct:
 
 ```js
 const asset = new pc.Asset('base.sog', 'gsplat', {
@@ -114,7 +369,7 @@ const asset = new pc.Asset('base.sog', 'gsplat', {
 });
 ```
 
-For blob files:
+For local selected `.sog` files:
 
 ```js
 const asset = new pc.Asset(file.name, 'gsplat', {
@@ -124,365 +379,305 @@ const asset = new pc.Asset(file.name, 'gsplat', {
 });
 ```
 
-Do not revoke a blob URL before PlayCanvas finishes loading it.
+Rules:
 
-When replacing a loaded local file, clean up the previous entity, asset, and blob URL safely.
+* do not break `base.sog` loading
+* do not omit `filename`
+* do not revoke blob URLs before loading completes
+* report loading, success, and failure clearly
+* converted SOG failure must not destroy the current working map
+* GLB / BIM loading must continue to work
 
-## Frontend Code Organization
+3DGS is not the main collision or precise picking layer. Use proxy geometry for serious interaction.
 
-Do not put all project logic into `src/main.js`.
+---
 
-As the project grows, split code into modules:
+## 11. Vue UI Rules
+
+Vue is the UI shell.
+
+Vue should control:
+
+* layout
+* 顶部工具栏
+* 左侧层级
+* 右侧属性
+* 底部资源 / 日志
+* 右键菜单
+
+PlayCanvas should control:
+
+* app initialization
+* canvas rendering
+* 3DGS loading
+* GLB / BIM loading
+* camera
+* marker
+* picking
+* runtime entities
+
+Rules:
+
+* do not bury PlayCanvas runtime logic inside Vue templates
+* do not create duplicate scene object state in Vue
+* canvas must fill only the 中间视口
+* inspector and hierarchy must remain synchronized through managers
+
+---
+
+## 12. Backend API Rules
+
+Backend APIs should be introduced incrementally.
+
+Early endpoints may include:
+
+* `GET /health`
+* `GET /api/health`
+* `GET /api/version`
+* scene API skeleton
+* asset API skeleton
+* entity API skeleton
+
+Rules:
+
+* use structured JSON responses
+* keep responses explicit and versionable
+* use stable IDs everywhere
+* separate static scene data from realtime data
+* health check failures must not block the frontend viewer
+
+---
+
+## 13. API Contract Rules
+
+Frontend and backend must agree on stable API shapes.
+
+Recommended success response:
+
+```json
+{
+  "ok": true,
+  "data": {},
+  "error": null
+}
+```
+
+Recommended error response:
+
+```json
+{
+  "ok": false,
+  "data": null,
+  "error": {
+    "code": "SCENE_NOT_FOUND",
+    "message": "Scene not found"
+  }
+}
+```
+
+Rules:
+
+* do not let frontend depend on random backend internal fields
+* keep API contract serializable
+* API offline state should only affect logs / status
+* frontend must still load local `base.sog` without backend
+
+---
+
+## 14. Persistence Strategy
+
+Persistence strategy at the current stage:
+
+* local scene object state lives in frontend managers now
+* scene JSON export/import is optional and may be deferred
+* backend API skeleton may exist before real persistence
+* database persistence comes later when explicitly requested
+
+Do not assume:
+
+* the next required step is Scene JSON
+* adding backend automatically means adding a database
+
+---
+
+## 15. Realtime Strategy
+
+Realtime is a later-stage concern.
+
+Possible future realtime domains:
+
+* robot position
+* device status
+* camera status
+* route updates
+* alarms
+
+Rules:
+
+* realtime state must be separate from static scene configuration
+* do not introduce WebSocket or MQTT unless a task explicitly asks for them
+* frontend must tolerate backend offline or missing realtime infrastructure
+
+---
+
+## 16. Asset Strategy
+
+Frontend local asset phase:
+
+* `apps/web/public/assets` stores local `.sog`, `.glb`, and related assets
+* local-selected files may use blob URLs
+* converted assets may live under `apps/web/public/assets/converted`
+
+Backend asset phase later:
+
+* uploaded files may move to local storage, MinIO, or S3
+* asset metadata may move to backend records
+
+Rules:
+
+* keep original files and converted files separate
+* do not eagerly load all large assets
+* do not delete physical asset files when deleting scene objects unless explicitly requested
+
+---
+
+## 17. Error Handling Rules
+
+Every async operation should provide:
+
+* loading state
+* success state
+* error state
+* useful console logs
+
+Preferred log style:
+
+```js
+console.log('[API] health check ok');
+console.warn('[API] health check failed:', error);
+console.error('[MiniEditor] SOG load failed:', error);
+```
+
+Rules:
+
+* do not hide real errors behind generic `failed`
+* health check failure should not break the viewer
+* backend errors should remain visible in logs
+
+---
+
+## 18. Testing / Verification Rules
+
+Frontend-related changes should verify at least:
+
+* `pnpm dev:web`
+* `pnpm build:web`
+* `base.sog` still loads
+* GLB / BIM loading still works
+* 左侧层级 and 右侧属性 still work
+* transform editing still works
+
+Backend-related changes should verify at least:
+
+* `pnpm dev:api`
+* `GET /health`
+* `GET /api/health`
+* `GET /api/version`
+
+Frontend/backend integration changes should verify at least:
+
+* `pnpm dev:web`
+* `pnpm dev:api`
+* frontend can request `/api/health`
+* API offline does not break the viewer
+
+If using root workspace commands, report clearly which app passed or failed:
+
+* `pnpm build`
+* `pnpm dev`
+
+---
+
+## 19. Encoding and Terminal Rules
+
+When using Windows PowerShell, use UTF-8 setup:
+
+```powershell
+chcp 65001
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$env:PYTHONUTF8 = "1"
+```
+
+Rules:
+
+* terminal logs should prefer English
+* UI text may remain Chinese
+* never copy terminal mojibake into source files
+* source files must remain UTF-8
+
+If you see garbled Chinese output, stop and re-read files with UTF-8 before editing.
+
+---
+
+## 20. Loop Engineering Rules
+
+Supported loop types:
+
+* Frontend-only loop
+* Backend-only loop
+* Shared-contract loop
+* Full-stack integration loop
+* Monorepo infrastructure loop
+
+Each loop should clearly state:
+
+* scope
+* files likely affected
+* what not to do
+* validation commands
+* expected output
+
+Good loop titles:
 
 ```text
-src
-├─ engine
-│  ├─ createApp.js
-│  ├─ CameraController.js
-│  ├─ SplatLoader.js
-│  ├─ ModelLoader.js
-│  ├─ ProxyRaycaster.js
-│  ├─ SceneSerializer.js
-│  └─ DebugHelpers.js
-├─ editor
-│  ├─ SceneManager.js
-│  ├─ EntityManager.js
-│  ├─ AssetManager.js
-│  ├─ SelectionManager.js
-│  └─ CommandManager.js
-├─ realtime
-│  ├─ WebSocketClient.js
-│  ├─ RealtimeStore.js
-│  └─ MessageTypes.js
-├─ ui
-│  ├─ Toolbar.js
-│  ├─ HierarchyPanel.js
-│  ├─ InspectorPanel.js
-│  ├─ AssetsPanel.js
-│  └─ StatusBar.js
-├─ api
-│  ├─ assetApi.js
-│  ├─ sceneApi.js
-│  ├─ deviceApi.js
-│  └─ routeApi.js
-└─ types
-   ├─ scene.js
-   ├─ asset.js
-   ├─ device.js
-   └─ realtime.js
+建立 monorepo 工程结构与最小 API Skeleton
+新增 apps/api health check，并在前端显示 API 状态
+实现 scenes API skeleton，但不接数据库
+将 scene object type constants 移入 packages/shared
+修复 apps/web Vite proxy 到 apps/api
 ```
 
-Current JavaScript is acceptable. When the project becomes more complex, migrate to TypeScript gradually rather than rewriting everything at once.
-
-## Scene Design Rules
-
-A scene should be conceptually organized as:
+Avoid vague titles:
 
 ```text
-Scene
-├─ BaseMap3DGS
-├─ ProxyCollisionMesh
-├─ StaticModels
-├─ DynamicObjects
-├─ Buildings
-├─ Roads
-├─ Cameras
-├─ Robots
-├─ Devices
-├─ Annotations
-├─ Routes
-├─ SensorLayer
-├─ InteractionLayer
-└─ CameraAndControls
+优化全栈项目
+完善后端
+整理架构
+继续开发
 ```
 
-Each scene object should eventually have:
+---
 
-```json
-{
-  "entityId": "entity_001",
-  "assetId": "asset_001",
-  "type": "glb | obj | ply | camera | robot | building | route | annotation",
-  "name": "Object Name",
-  "position": [0, 0, 0],
-  "rotation": [0, 0, 0],
-  "scale": [1, 1, 1],
-  "metadata": {}
-}
-```
+## 21. Development Style
 
-Rules:
+Development style for this stage:
 
-* Every asset must eventually have a stable `assetId`.
-* Every scene object must eventually have a stable `entityId`.
-* Display names are not stable IDs.
-* Scene state must be serializable.
-* Static scene configuration and realtime device state must be separated.
-* UI should not directly mutate scattered PlayCanvas entities without going through managers.
-* Future editing actions should be designed so Undo/Redo can be added.
+* make small, safe, runnable changes
+* preserve existing viewer/editor behavior
+* do not break `base.sog` loading
+* do not rewrite PlayCanvas runtime for backend work
+* backend development is now allowed
+* backend changes must still be incremental and explicitly scoped
 
-## 3DGS Rules
+Do not introduce these unless the task explicitly asks for them:
 
-3DGS is a visual map, similar to a high-realism spatial texture.
+* database
+* auth
+* file upload
+* websocket
+* mqtt
+* deployment infrastructure
 
-Do not assume 3DGS can provide:
-
-* Accurate mesh raycast
-* Reliable collision
-* Walkable navigation
-* Building-level click detection
-* Object snapping
-* Route planning
-
-Use proxy meshes or business entities for those functions.
-
-Large `.sog` files can be hundreds of MB. Always provide:
-
-* Loading state
-* Progress when possible
-* Success state
-* Full error state
-* Console error with useful debug data
-
-Do not only show `failed`.
-
-## Proxy Mesh Rules
-
-Proxy mesh is required for serious interaction.
-
-Use proxy mesh for:
-
-* Click detection
-* Ground picking
-* Object placement
-* Collision
-* Building/road/region selection
-* Path anchor points
-* Navigation surface
-* Robot route visualization
-
-Proxy mesh can be simple and invisible.
-
-Typical proxy geometry:
-
-* Planes for ground
-* Boxes for buildings
-* Simple meshes for roads
-* Regions for clickable areas
-* Lines or nodes for route networks
-
-3DGS and proxy mesh must share the same coordinate system.
-
-## Coordinate Rules
-
-Coordinate consistency is critical.
-
-All systems must eventually map into one scene coordinate system:
-
-* 3DGS map coordinates
-* Proxy mesh coordinates
-* GLB / OBJ / PLY model coordinates
-* Robot real-world coordinates
-* Camera coordinates
-* Route coordinates
-* Sensor coordinates
-* PlayCanvas coordinates
-
-Store calibration data explicitly:
-
-```json
-{
-  "origin": [0, 0, 0],
-  "rotation": [0, 0, 0],
-  "scale": [1, 1, 1],
-  "unit": "meter"
-}
-```
-
-Do not scatter coordinate conversion logic. Keep conversion functions centralized.
-
-## Asset Rules
-
-Supported or planned asset formats:
-
-* `.sog` for 3DGS visual base maps
-* `.ply` for 3DGS or point cloud data depending on context
-* `.glb` / `.gltf` for normal 3D models
-* `.obj` as import format, preferably converted to GLB later
-* Images for labels, icons, textures, and UI
-* JSON for scene, route, and annotation data
-* Camera streams through backend media services later
-
-Rules:
-
-* Do not rely only on file names.
-* Use asset records and IDs.
-* Keep original files and converted files separate.
-* Prefer GLB for runtime models.
-* Do not load all large assets eagerly.
-* Reuse loaded assets when possible.
-* Show asset load errors in UI and console.
-
-## Interaction Rules
-
-Interaction should be based on the entity system.
-
-Typical user interactions:
-
-* Click building
-* Click road
-* Click robot
-* Click camera
-* Click device
-* Show information popup
-* Show robot route to selected target
-* Show camera video
-* Place a model on the map
-* Add annotation
-* Toggle layer visibility
-* Edit transform
-
-Rules:
-
-* Do not bind complex business logic directly inside mouse event handlers.
-* Mouse events should dispatch higher-level selection or command events.
-* Click detection should prioritize business objects and proxy mesh.
-* 3DGS should not be the primary hit-test target.
-* Camera video and device data should be loaded on demand.
-
-## Robot and Route Rules
-
-Robots are dynamic entities.
-
-Robot data should include:
-
-* Robot ID
-* Current position
-* Rotation / heading
-* Online state
-* Task state
-* Battery state
-* Current route
-* Target point
-* Error state
-
-Route data should be a list of scene-space points.
-
-Frontend should display routes and robot movement, but complex path planning should be handled by backend or an external robot system.
-
-Robot movement in the frontend should use interpolation to avoid visual jumping.
-
-## Camera Rules
-
-Cameras are scene entities with business metadata.
-
-Camera data should include:
-
-* Camera ID
-* Name
-* Position
-* Rotation / direction
-* Status
-* Stream URL or stream ID
-* Coverage direction or frustum
-* Related building/area
-
-Rules:
-
-* Do not load all live video streams at startup.
-* Load stream only when the user opens a camera panel.
-* RTSP should not be played directly in normal browser UI.
-* Use backend conversion to WebRTC, HLS, or another browser-compatible format later.
-* Camera status can be realtime data.
-* Camera position and direction should be editable and persisted.
-
-## Realtime Rules
-
-Realtime data should not overwrite static scene configuration.
-
-Use realtime channels for:
-
-* Robot position updates
-* Device status updates
-* Camera status updates
-* Alarm events
-* Route updates
-* Task updates
-* Sensor readings
-
-Expected realtime message style:
-
-```json
-{
-  "type": "robot.position.updated",
-  "id": "robot_001",
-  "position": [12.5, 0, -8.2],
-  "rotation": [0, 90, 0],
-  "timestamp": 1710000000000
-}
-```
-
-Rules:
-
-* Realtime messages must have a clear `type`.
-* Realtime messages must reference stable IDs.
-* High-frequency updates should be throttled or interpolated.
-* Important events can be persisted later.
-* Frontend should tolerate missing, delayed, or out-of-order messages.
-
-## Error Handling Rules
-
-Every async operation must have:
-
-* Loading state
-* Success state
-* Error state
-* Useful console logs
-
-For `.sog` loading errors, check:
-
-* Is the URL correct?
-* Can the browser access the file?
-* Was `filename` provided?
-* Is the file too large?
-* Is the engine version compatible?
-* Is the browser running out of memory?
-* Does the console show WebGL/WebGPU errors?
-
-Do not hide errors behind generic messages.
-
-## Testing / Verification Rules
-
-After changes, verify at least:
-
-* `npm run dev` starts
-* Browser opens the Vite URL
-* Existing `public/assets/base.sog` still loads
-* Reset camera works
-* Window resize works
-* Asset loading errors are visible
-* Console does not contain unexplained errors
-
-For future features, verify:
-
-* Scene can serialize and reload
-* Proxy click returns expected point
-* Model overlay appears in correct coordinates
-* Entity selection works
-* Realtime updates do not break static scene state
-
-## Development Style
-
-Make small, safe, runnable changes.
-
-Prefer clear architecture over quick hacks.
-
-Do not introduce backend, React, TypeScript migration, or database changes unless the current task explicitly asks for it.
-
-When asked to implement a feature:
-
-1. Preserve current working viewer.
-2. Add the smallest useful abstraction.
-3. Keep the code easy to extend.
-4. Explain what changed.
-5. Explain how to test it.
+This repository is now a monorepo full-stack project, but it should still evolve in careful, testable steps.

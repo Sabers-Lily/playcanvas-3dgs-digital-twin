@@ -1,5 +1,21 @@
 import * as pc from 'playcanvas';
 
+const BIM_FILE_NAME = '\u5357\u5e7f\u573a.glb';
+const BIM_ENTITY_NAME = 'BIM Proxy - \u5357\u5e7f\u573a';
+const DEFAULT_TRANSFORM = {
+  position: [0, 0, 0],
+  rotation: [0, 0, 0],
+  scale: [1, 1, 1]
+};
+
+function cloneTransform(transform) {
+  return {
+    position: [...transform.position],
+    rotation: [...transform.rotation],
+    scale: [...transform.scale]
+  };
+}
+
 function createDebugMaterial(color, opacity) {
   const material = new pc.StandardMaterial();
   material.diffuse = color;
@@ -23,10 +39,11 @@ export class BimProxyManager {
     this.visible = true;
     this.debugVisible = false;
     this.opacity = 1;
+    this.transform = cloneTransform(DEFAULT_TRANSFORM);
 
     this._fallbackSize = 5000;
     this._fallbackMaterial = createDebugMaterial(new pc.Color(0.15, 0.75, 1), 0.18);
-    this._debugMaterial = createDebugMaterial(new pc.Color(1, 0.6, 0.15), 0.2);
+    this._debugMaterial = createDebugMaterial(new pc.Color(1, 0.6, 0.15), 0.35);
     this._originalMaterials = new Map();
   }
 
@@ -52,15 +69,15 @@ export class BimProxyManager {
     return entity;
   }
 
-  async load(url = encodeURI('/assets/南广场.glb')) {
+  async load(url) {
     if (this.bimLoaded && this.bimRootEntity) {
       return this.bimRootEntity;
     }
 
     return new Promise((resolve, reject) => {
-      const asset = new pc.Asset('南广场.glb', 'container', {
+      const asset = new pc.Asset(BIM_FILE_NAME, 'container', {
         url,
-        filename: '南广场.glb'
+        filename: BIM_FILE_NAME
       });
 
       this.bimAsset = asset;
@@ -73,19 +90,14 @@ export class BimProxyManager {
             receiveShadows: false
           });
 
-          entity.name = 'BIM Proxy - 南广场';
+          entity.name = BIM_ENTITY_NAME;
           this.app.root.addChild(entity);
 
           this.bimRootEntity = entity;
           this.bimLoaded = true;
-          this.setTransform({
-            position: [0, 0, 0],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1]
-          });
           this.setVisible(true);
           this.setDebugVisible(false);
-          this.setOpacity(1);
+          this.applyCurrentTransform();
           resolve(entity);
         } catch (error) {
           reject(error);
@@ -96,6 +108,7 @@ export class BimProxyManager {
         if (this.app.assets.get(asset.id)) {
           this.app.assets.remove(asset);
         }
+
         this.bimAsset = null;
         reject(err);
       });
@@ -104,12 +117,18 @@ export class BimProxyManager {
     });
   }
 
+  applyCurrentTransform() {
+    return this.setTransform(this.transform);
+  }
+
   setVisible(visible) {
     this.visible = Boolean(visible);
 
     if (this.bimRootEntity) {
       this.bimRootEntity.enabled = this.visible;
     }
+
+    return this.visible;
   }
 
   toggleVisible() {
@@ -125,7 +144,11 @@ export class BimProxyManager {
     }
 
     if (!this.bimRootEntity) {
-      return;
+      return false;
+    }
+
+    if (this.debugVisible) {
+      this.setVisible(true);
     }
 
     const renderComponents = this.bimRootEntity.findComponents('render');
@@ -140,6 +163,8 @@ export class BimProxyManager {
           : this._originalMaterials.get(meshInstance);
       });
     });
+
+    return true;
   }
 
   toggleDebugVisible() {
@@ -151,7 +176,7 @@ export class BimProxyManager {
     this.opacity = opacity;
 
     if (!this.bimRootEntity || this.debugVisible) {
-      return;
+      return false;
     }
 
     const renderComponents = this.bimRootEntity.findComponents('render');
@@ -164,45 +189,90 @@ export class BimProxyManager {
         material.update();
       });
     });
+
+    return true;
   }
 
   setTransform({ position, rotation, scale }) {
-    const entity = this.bimRootEntity;
-    if (!entity) {
-      return;
-    }
-
     if (position) {
-      entity.setLocalPosition(position[0], position[1], position[2]);
+      this.transform.position = [...position];
     }
 
     if (rotation) {
-      entity.setLocalEulerAngles(rotation[0], rotation[1], rotation[2]);
+      this.transform.rotation = [...rotation];
     }
 
     if (scale) {
-      entity.setLocalScale(scale[0], scale[1], scale[2]);
+      this.transform.scale = [...scale];
     }
+
+    const entity = this.bimRootEntity;
+    if (!entity) {
+      return false;
+    }
+
+    entity.setPosition(
+      this.transform.position[0],
+      this.transform.position[1],
+      this.transform.position[2]
+    );
+    entity.setEulerAngles(
+      this.transform.rotation[0],
+      this.transform.rotation[1],
+      this.transform.rotation[2]
+    );
+    entity.setLocalScale(
+      this.transform.scale[0],
+      this.transform.scale[1],
+      this.transform.scale[2]
+    );
+
+    return true;
+  }
+
+  getTransform() {
+    return cloneTransform(this.transform);
+  }
+
+  resetTransform() {
+    this.transform = cloneTransform(DEFAULT_TRANSFORM);
+
+    if (!this.bimRootEntity) {
+      return false;
+    }
+
+    this.applyCurrentTransform();
+    return true;
   }
 
   getRootEntity() {
     return this.bimRootEntity;
   }
 
-  getPickableEntities() {
-    if (this.bimRootEntity) {
-      return [this.bimRootEntity];
-    }
-
-    if (this.fallbackProxy) {
-      return [this.fallbackProxy];
-    }
-
-    return [];
-  }
-
   isLoaded() {
     return this.bimLoaded;
+  }
+
+  unload() {
+    if (this.bimRootEntity) {
+      this.bimRootEntity.destroy();
+      this.bimRootEntity = null;
+    }
+
+    if (this.bimAsset) {
+      this.bimAsset.off();
+      this.bimAsset.unload();
+      if (this.app.assets.get(this.bimAsset.id)) {
+        this.app.assets.remove(this.bimAsset);
+      }
+      this.bimAsset = null;
+    }
+
+    this._originalMaterials.clear();
+    this.bimLoaded = false;
+    this.visible = true;
+    this.debugVisible = false;
+    return true;
   }
 
   intersectRay(origin, direction) {
