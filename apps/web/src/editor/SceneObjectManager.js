@@ -6,13 +6,14 @@ const TYPE_ORDER = {
   marker: 5,
   empty: 6,
   robot: 7,
-  cameraDevice: 8,
-  device: 9,
-  hotspot: 10,
-  annotation: 11,
-  routePoint: 12,
-  model: 13,
-  glb: 14
+  robotDog: 8,
+  cameraDevice: 9,
+  device: 10,
+  hotspot: 11,
+  annotation: 12,
+  routePoint: 13,
+  model: 14,
+  glb: 15
 };
 
 const TYPE_LABELS = {
@@ -21,6 +22,7 @@ const TYPE_LABELS = {
   marker: 'Marker',
   empty: '空对象',
   robot: '机器狗',
+  robotDog: '机器狗',
   cameraDevice: '摄像头',
   device: '设备',
   hotspot: '热点',
@@ -49,10 +51,40 @@ function cloneTransform(transform) {
     : undefined;
 }
 
+function clonePatrolMetadata(patrol) {
+  if (!patrol) {
+    return undefined;
+  }
+
+  return {
+    ...patrol,
+    routePoints: Array.isArray(patrol.routePoints)
+      ? patrol.routePoints.map((point) => ({
+          ...point,
+          position: Array.isArray(point.position) ? [...point.position] : [0, 0, 0]
+        }))
+      : []
+  };
+}
+
+function cloneMetadata(metadata) {
+  if (!metadata) {
+    return {};
+  }
+
+  return {
+    ...metadata,
+    videoProjection: metadata.videoProjection
+      ? { ...metadata.videoProjection }
+      : undefined,
+    patrol: clonePatrolMetadata(metadata.patrol)
+  };
+}
+
 function cloneObject(object) {
   return {
     ...object,
-    metadata: { ...(object.metadata ?? {}) },
+    metadata: cloneMetadata(object.metadata),
     transform: cloneTransform(object.transform)
   };
 }
@@ -81,6 +113,9 @@ function toSceneObjectSnapshot(object) {
       size: object.metadata?.size,
       businessType: object.metadata?.businessType,
       videoProjection: object.metadata?.videoProjection
+        ? { ...object.metadata.videoProjection }
+        : undefined,
+      patrol: clonePatrolMetadata(object.metadata?.patrol)
     }
   };
 }
@@ -123,6 +158,7 @@ export class SceneObjectManager {
     normalized.displayName = normalized.displayName ?? normalized.name ?? normalized.entity?.name ?? normalized.id;
     normalized.name = normalized.name ?? normalized.displayName;
     normalized.typeLabel = normalized.typeLabel ?? TYPE_LABELS[normalized.type] ?? normalized.type;
+    normalized.metadata = cloneMetadata(normalized.metadata);
 
     if (normalized.entity) {
       normalized.visible = normalized.entity.enabled;
@@ -142,10 +178,10 @@ export class SceneObjectManager {
     const next = {
       ...current,
       ...patch,
-      metadata: {
+      metadata: cloneMetadata({
         ...(current.metadata ?? {}),
         ...(patch.metadata ?? {})
-      }
+      })
     };
 
     next.displayName = next.displayName ?? next.name ?? current.displayName;
@@ -270,6 +306,12 @@ export class SceneObjectManager {
 
   setMetadata(id, metadata) {
     return this.updateObject(id, { metadata });
+  }
+
+  setTransform(id, transform) {
+    return this.updateObject(id, {
+      transform: cloneTransform(transform)
+    });
   }
 
   toggleVisible(id) {

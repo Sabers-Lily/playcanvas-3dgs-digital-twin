@@ -27,7 +27,7 @@ const emit = defineEmits([
 
 const ADD_OBJECT_ITEMS = [
   { type: 'empty', label: '空对象' },
-  { type: 'robot', label: '机器狗' },
+  { type: 'robotDog', label: '机器狗' },
   { type: 'cameraDevice', label: '摄像头' },
   { type: 'device', label: '设备' },
   { type: 'hotspot', label: '热点' },
@@ -46,6 +46,7 @@ function typeIcon(type) {
     case 'camera':
       return '[C]';
     case 'robot':
+    case 'robotDog':
       return '[R]';
     case 'cameraDevice':
       return '[V]';

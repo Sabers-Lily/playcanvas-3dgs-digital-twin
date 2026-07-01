@@ -7,6 +7,7 @@ import { GsplatMp4ProjectorAdapter } from '../engine/GsplatMp4ProjectorAdapter.j
 import { GsplatPointPicker } from '../engine/GsplatPointPicker.js';
 import { MarkerManager } from '../engine/MarkerManager.js';
 import { PickingController } from '../engine/PickingController.js';
+import { RobotDogPatrolController } from '../engine/RobotDogPatrolController.js';
 import { SceneObjectManager } from '../editor/SceneObjectManager.js';
 import { SelectionManager } from '../editor/SelectionManager.js';
 
@@ -25,6 +26,7 @@ const TRANSFORM_EDITABLE_TYPES = new Set([
   'glb',
   'empty',
   'robot',
+  'robotDog',
   'cameraDevice',
   'device',
   'hotspot',
@@ -39,6 +41,7 @@ const RESTORABLE_OBJECT_TYPES = new Set([
   'marker',
   'empty',
   'robot',
+  'robotDog',
   'cameraDevice',
   'device',
   'hotspot',
@@ -59,6 +62,12 @@ const BUSINESS_OBJECT_DEFINITIONS = {
     displayName: '机器狗',
     typeLabel: '机器狗',
     businessType: 'robot'
+  },
+  robotDog: {
+    idPrefix: 'robot_dog',
+    displayName: '机器狗',
+    typeLabel: '机器狗',
+    businessType: 'robotDog'
   },
   cameraDevice: {
     idPrefix: 'camera_device',
@@ -198,7 +207,8 @@ function normalizeRestoredObjectPayload(object) {
       size: object?.metadata?.size,
       businessType: object?.metadata?.businessType,
       placedBy: object?.metadata?.placedBy,
-      videoProjection: object?.metadata?.videoProjection
+      videoProjection: object?.metadata?.videoProjection,
+      patrol: clonePatrolMetadata(object?.metadata?.patrol)
     }
   };
 }
@@ -218,6 +228,23 @@ function createBusinessObjectId(type, prefix = 'object') {
 
 function formatPointLog(point) {
   return `x=${point.x.toFixed(2)}, y=${point.y.toFixed(2)}, z=${point.z.toFixed(2)}`;
+}
+
+function clonePatrolMetadata(patrol) {
+  if (!patrol) {
+    return undefined;
+  }
+
+  return {
+    ...patrol,
+    routePoints: Array.isArray(patrol.routePoints)
+      ? patrol.routePoints.map((point, index) => ({
+          ...point,
+          index: point.index ?? index,
+          position: Array.isArray(point.position) ? [...point.position] : [0, 0, 0]
+        }))
+      : []
+  };
 }
 
 function createDefaultVideoProjectionMetadata(id, partial = {}) {
@@ -267,6 +294,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   const bimAlignmentManager = new BimAlignmentManager();
   const bimProxyManager = new BimProxyManager({ app });
   const markerManager = new MarkerManager({ app });
+  const robotDogPatrolController = new RobotDogPatrolController({
+    app,
+    sceneObjectManager,
+    selectionManager,
+    onLog(message) {
+      console.log(message);
+      updateStatusMessage(message);
+    }
+  });
 
   const cameraController = new CameraController({
     app,
@@ -468,8 +504,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     window.markerManager = markerManager;
     window.sceneObjectManager = sceneObjectManager;
     window.selectionManager = selectionManager;
+    window.robotDogPatrolController = robotDogPatrolController;
     window.placementMode = placementMode;
     window.gsplatVideoProjector = activeMp4Projector;
+    window.createRobotDog = createRobotDog;
+    window.startRobotDogRouteEditing = startRobotDogRouteEditing;
+    window.startRobotDogPatrol = startRobotDogPatrol;
+    window.stopRobotDogPatrol = stopRobotDogPatrol;
   }
 
   function formatCameraState() {
@@ -737,6 +778,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   }
 
   function getDefaultCreatePosition() {
+    const lastPickWorldPosition = pickingController?.getLastPickWorldPosition?.();
+    if (lastPickWorldPosition) {
+      return [lastPickWorldPosition.x, lastPickWorldPosition.y, lastPickWorldPosition.z];
+    }
+
     const marker = markerManager.marker;
     if (marker?.getPosition) {
       const position = marker.getPosition();
@@ -765,16 +811,37 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         entity.setLocalScale(0.4, 0.4, 0.4);
         break;
       }
-      case 'robot': {
+      case 'robot':
+      case 'robotDog': {
         material.diffuse = new pc.Color(0.91, 0.63, 0.22);
         material.update();
-        entity.addComponent('render', {
+        const body = new pc.Entity(`${displayName}-Body`);
+        body.addComponent('render', {
           type: 'box',
           castShadows: false,
           receiveShadows: false,
           material
         });
-        entity.setLocalScale(0.9, 0.55, 1.2);
+        body.setLocalScale(0.9, 0.42, 1.1);
+        body.setLocalPosition(0, 0.35, 0);
+        entity.addChild(body);
+
+        const noseMaterial = new pc.StandardMaterial();
+        noseMaterial.diffuse = new pc.Color(0.98, 0.28, 0.16);
+        noseMaterial.emissive = new pc.Color(0.45, 0.08, 0.04);
+        noseMaterial.update();
+
+        const nose = new pc.Entity(`${displayName}-Forward`);
+        nose.addComponent('render', {
+          type: 'cone',
+          castShadows: false,
+          receiveShadows: false,
+          material: noseMaterial
+        });
+        nose.setLocalScale(0.22, 0.4, 0.22);
+        nose.setLocalEulerAngles(90, 0, 0);
+        nose.setLocalPosition(0, 0.35, 0.78);
+        entity.addChild(nose);
         break;
       }
       case 'cameraDevice': {
@@ -874,6 +941,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     const projectionMetadata = type === 'cameraDevice'
       ? createDefaultVideoProjectionMetadata(id, options.metadata?.videoProjection)
       : null;
+    const patrolMetadata = type === 'robotDog'
+      ? clonePatrolMetadata(options.metadata?.patrol ?? robotDogPatrolController.buildRobotDogMetadata().patrol)
+      : undefined;
 
     sceneObjectManager.addObject({
       id,
@@ -884,12 +954,14 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       entity,
       transform: getTransformFromEntity(entity),
       visible: options.visible ?? true,
-      status: 'active',
+      status: options.status ?? 'active',
       metadata: {
+        ...(options.metadata ?? {}),
         businessType: options.metadata?.businessType ?? definition.businessType,
         source: options.metadata?.source ?? 'editor-created',
         placedBy: options.metadata?.placedBy,
-        videoProjection: projectionMetadata
+        videoProjection: projectionMetadata,
+        patrol: patrolMetadata
       }
     });
 
@@ -898,8 +970,155 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     selectionManager.select(id);
+    if (type === 'robotDog') {
+      robotDogPatrolController.syncExistingRobotDogs();
+    }
     updateStatusMessage(`Added scene object: ${displayName}`);
     return { id, type, entity };
+  }
+
+  function getSelectedRobotDogId() {
+    const selectedId = selectionManager.getSelectedId();
+    const object = selectedId ? sceneObjectManager.getObject(selectedId) : null;
+    return object?.type === 'robotDog' ? object.id : null;
+  }
+
+  function resolveRobotDogId(robotDogId = null) {
+    return robotDogId || getSelectedRobotDogId();
+  }
+
+  function createRobotDog(options = {}) {
+    const transform = sanitizeTransformInput(options.transform, {
+      position: getDefaultCreatePosition(),
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1]
+    });
+    const result = createBusinessSceneObject('robotDog', {
+      id: options.id,
+      displayName: options.displayName || '机器狗',
+      transform,
+      visible: options.visible ?? true,
+      status: options.status ?? 'ready',
+      metadata: {
+        ...(options.metadata ?? {}),
+        businessType: 'robotDog',
+        source: options.metadata?.source ?? 'editor-created',
+        placedBy: options.metadata?.placedBy ?? 'toolbar',
+        patrol: robotDogPatrolController.buildRobotDogMetadata(options.metadata).patrol
+      }
+    });
+
+    if (!result) {
+      return null;
+    }
+
+    const robotDogId = result.id;
+    console.log(`[RobotDogPatrol] robot dog created: robotDogId=${robotDogId}`);
+    updateStatusMessage(`[RobotDogPatrol] robot dog created: robotDogId=${robotDogId}`);
+    return result;
+  }
+
+  function startRobotDogRouteEditing(robotDogId = null) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      console.log('[RobotDogPatrol] route editing failed: selected object is not robotDog');
+      updateStatusMessage('[RobotDogPatrol] route editing failed: selected object is not robotDog');
+      return false;
+    }
+
+    selectionManager.select(resolvedId);
+    return robotDogPatrolController.startRouteEditing(resolvedId);
+  }
+
+  function stopRobotDogRouteEditing(robotDogId = null) {
+    const resolvedId = resolveRobotDogId(robotDogId) ?? robotDogPatrolController.getEditingRobotDogId();
+    if (!resolvedId) {
+      return false;
+    }
+
+    return robotDogPatrolController.stopRouteEditing(resolvedId);
+  }
+
+  function addRobotDogRoutePoint(robotDogId, worldPosition) {
+    if (!worldPosition) {
+      console.warn('[RobotDogPatrol] add waypoint failed: no valid pick position');
+      updateStatusMessage('[RobotDogPatrol] add waypoint failed: no valid pick position');
+      return false;
+    }
+
+    return robotDogPatrolController.addRoutePoint(robotDogId, worldPosition);
+  }
+
+  function clearRobotDogRoute(robotDogId = null) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      return false;
+    }
+
+    return robotDogPatrolController.clearRoute(resolvedId);
+  }
+
+  function startRobotDogPatrol(robotDogId = null) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      return false;
+    }
+
+    return robotDogPatrolController.startPatrol(resolvedId);
+  }
+
+  function pauseRobotDogPatrol(robotDogId = null) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      return false;
+    }
+
+    return robotDogPatrolController.pausePatrol(resolvedId);
+  }
+
+  function resumeRobotDogPatrol(robotDogId = null) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      return false;
+    }
+
+    return robotDogPatrolController.resumePatrol(resolvedId);
+  }
+
+  function stopRobotDogPatrol(robotDogId = null) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      return false;
+    }
+
+    return robotDogPatrolController.stopPatrol(resolvedId);
+  }
+
+  function setRobotDogPatrolSpeed(robotDogId = null, speed = 2) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      return false;
+    }
+
+    return robotDogPatrolController.setPatrolSpeed(resolvedId, speed);
+  }
+
+  function setRobotDogPatrolLoop(robotDogId = null, loop = false) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      return false;
+    }
+
+    return robotDogPatrolController.setPatrolLoop(resolvedId, loop);
+  }
+
+  function getRobotDogPatrolState(robotDogId = null) {
+    const resolvedId = resolveRobotDogId(robotDogId);
+    if (!resolvedId) {
+      return null;
+    }
+
+    return robotDogPatrolController.getPatrolState(resolvedId);
   }
 
   function startPlacementMode(type) {
@@ -1479,11 +1698,14 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       displayName: object.displayName,
       transform: object.transform,
       visible: object.visible,
+      status: object.status ?? 'active',
       metadata: {
+        ...(object.metadata ?? {}),
         businessType: object.metadata.businessType,
         source: object.metadata.source || 'editor-created',
         placedBy: object.metadata.placedBy,
-        videoProjection: object.metadata.videoProjection
+        videoProjection: object.metadata.videoProjection,
+        patrol: clonePatrolMetadata(object.metadata.patrol)
       }
     });
   }
@@ -1863,6 +2085,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     const nextObject = sceneObjectManager.getObject(objectId);
+    if (nextObject?.type === 'robotDog') {
+      robotDogPatrolController.setRouteVisible(objectId, nextObject.visible);
+    }
     updateStatusMessage(`${nextObject.name} ${nextObject.visible ? 'visible' : 'hidden'}`);
     return true;
   }
@@ -1938,6 +2163,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         destroyActiveMp4Projector();
         activeProjectorCameraId = null;
       }
+    }
+
+    if (object.type === 'robotDog') {
+      robotDogPatrolController.removeRobotDog(object.id);
     }
 
     if (
@@ -2051,6 +2280,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return createBusinessSceneObject(type);
     }
 
+    if (type === 'robotDog') {
+      return createRobotDog();
+    }
+
     startPlacementMode(type);
     return null;
   }
@@ -2097,6 +2330,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       case 'reset-camera':
         cameraController.reset();
         updateStatusMessage('Camera reset');
+        return;
+      case 'create-robot-dog':
+        createRobotDog();
         return;
       case 'load-local-sog':
         if (payload) {
@@ -2255,6 +2491,36 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         }
         return;
       }
+      case 'create-robot-dog':
+        createRobotDog(payload ?? {});
+        return;
+      case 'robot-dog-start-edit':
+        startRobotDogRouteEditing(payload?.robotDogId);
+        return;
+      case 'robot-dog-stop-edit':
+        stopRobotDogRouteEditing(payload?.robotDogId);
+        return;
+      case 'robot-dog-clear-route':
+        clearRobotDogRoute(payload?.robotDogId);
+        return;
+      case 'robot-dog-start-patrol':
+        startRobotDogPatrol(payload?.robotDogId);
+        return;
+      case 'robot-dog-pause-patrol':
+        pauseRobotDogPatrol(payload?.robotDogId);
+        return;
+      case 'robot-dog-resume-patrol':
+        resumeRobotDogPatrol(payload?.robotDogId);
+        return;
+      case 'robot-dog-stop-patrol':
+        stopRobotDogPatrol(payload?.robotDogId);
+        return;
+      case 'robot-dog-set-speed':
+        setRobotDogPatrolSpeed(payload?.robotDogId, payload?.speed);
+        return;
+      case 'robot-dog-set-loop':
+        setRobotDogPatrolLoop(payload?.robotDogId, payload?.loop);
+        return;
       case 'reload-base':
         loadRemoteSog({
           path: ASSET_PATHS.baseSog,
@@ -2362,6 +2628,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     bimProxyManager,
     markerManager,
     gsplatPointPicker,
+    shouldPrioritizeScenePick: () => Boolean(robotDogPatrolController.getEditingRobotDogId()),
     pickBusinessObject,
     onBusinessObjectPick: (hit) => {
       selectionManager.select(hit.objectId);
@@ -2390,6 +2657,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         return;
       }
 
+      const editingRobotDogId = robotDogPatrolController.getEditingRobotDogId();
+      if (editingRobotDogId) {
+        addRobotDogRoutePoint(editingRobotDogId, hit.worldPoint);
+        return;
+      }
+
       console.debug(`[Pick] gsplat success: ${formatPointLog(hit.worldPoint)}`);
       setPickStatus('picked', `GSplat point picked: ${formatPointLog(hit.worldPoint)}`);
     },
@@ -2412,6 +2685,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       }
 
       console.debug(`[Pick] fallback plane used: ${formatPointLog(hit.point)}`);
+      const editingRobotDogId = robotDogPatrolController.getEditingRobotDogId();
+      if (editingRobotDogId) {
+        addRobotDogRoutePoint(editingRobotDogId, hit.point);
+        return;
+      }
+
       if (placementMode?.type) {
         console.debug('[Placement] requires gsplat pick, fallback ignored');
         setPickStatus('warning', `Fallback plane picked: ${formatPointLog(hit.point)}`, 'Placement requires gsplat pick, fallback ignored');
@@ -2433,6 +2712,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     if (selected) {
       pushLog(`Selected: ${selected.name}`);
     }
+    const editingRobotDogId = robotDogPatrolController.getEditingRobotDogId();
+    if (editingRobotDogId && selectionId && editingRobotDogId !== selectionId) {
+      robotDogPatrolController.stopRouteEditing(editingRobotDogId, { silent: true });
+    }
     if (!selectionId) {
       closeContextMenu();
       emitState();
@@ -2443,6 +2726,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
+      if (stopRobotDogRouteEditing()) {
+        return;
+      }
       if (cancelPlacementMode()) {
         return;
       }
@@ -2504,8 +2790,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     updateStatusMessage('Asset checks complete');
   });
 
-  app.on('update', () => {
+  app.on('update', (dt) => {
     activeMp4Projector?.update();
+    robotDogPatrolController.update(dt ?? 0);
   });
 
   if (!sceneObjectManager.getObject('camera_0')) {
@@ -2516,6 +2803,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   }
 
   loadSavedAlignment({ silent: true });
+  robotDogPatrolController.syncExistingRobotDogs();
   updateDebugHandles();
   resizeViewport();
   flushState();
@@ -2535,6 +2823,17 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     setUploadedAssets,
     restoreSceneObjectsFromPayload,
     addSceneObjectByType,
+    createRobotDog,
+    startRobotDogRouteEditing,
+    stopRobotDogRouteEditing,
+    addRobotDogRoutePoint,
+    clearRobotDogRoute,
+    startRobotDogPatrol,
+    pauseRobotDogPatrol,
+    resumeRobotDogPatrol,
+    stopRobotDogPatrol,
+    setRobotDogPatrolSpeed,
+    getRobotDogPatrolState,
     OBJECT_IDS,
     handleToolbarAction,
     handleHierarchySelect,

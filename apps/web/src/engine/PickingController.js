@@ -14,6 +14,7 @@ export class PickingController {
     bimProxyManager,
     markerManager,
     gsplatPointPicker,
+    shouldPrioritizeScenePick,
     pickBusinessObject,
     onBusinessObjectPick,
     onGsplatPick,
@@ -27,6 +28,7 @@ export class PickingController {
     this.bimProxyManager = bimProxyManager;
     this.markerManager = markerManager;
     this.gsplatPointPicker = gsplatPointPicker || null;
+    this.shouldPrioritizeScenePick = shouldPrioritizeScenePick || null;
     this.pickBusinessObject = pickBusinessObject || null;
     this.onBusinessObjectPick = onBusinessObjectPick || null;
     this.onGsplatPick = onGsplatPick || null;
@@ -36,6 +38,7 @@ export class PickingController {
 
     this.pointerDown = null;
     this.clickThresholdSq = 16;
+    this.lastPickWorldPosition = null;
 
     this.app.mouse?.on(pc.EVENT_MOUSEDOWN, this._onMouseDown, this);
     this.app.mouse?.on(pc.EVENT_MOUSEUP, this._onMouseUp, this);
@@ -178,18 +181,22 @@ export class PickingController {
   }
 
   async pick(screenX, screenY) {
-    const businessHit = this.pickBusinessObject?.(screenX, screenY) ?? null;
-    if (businessHit) {
-      this.onBusinessObjectPick?.(businessHit);
-      return {
-        type: 'business-object',
-        ...businessHit
-      };
+    const prioritizeScenePick = Boolean(this.shouldPrioritizeScenePick?.());
+    if (!prioritizeScenePick) {
+      const businessHit = this.pickBusinessObject?.(screenX, screenY) ?? null;
+      if (businessHit) {
+        this.onBusinessObjectPick?.(businessHit);
+        return {
+          type: 'business-object',
+          ...businessHit
+        };
+      }
     }
 
     console.debug(`[Pick] gsplat start: x=${screenX.toFixed(1)}, y=${screenY.toFixed(1)}`);
     const gsplatHit = await this.gsplatPointPicker?.pick?.(screenX, screenY);
     if (gsplatHit?.worldPoint) {
+      this.lastPickWorldPosition = gsplatHit.worldPoint.clone?.() ?? gsplatHit.worldPoint;
       this.markerManager.placeMarker(gsplatHit.worldPoint);
       this.onGsplatPick?.(gsplatHit);
       this.onPick?.({
@@ -212,6 +219,7 @@ export class PickingController {
       return null;
     }
 
+    this.lastPickWorldPosition = fallbackHit.point.clone?.() ?? fallbackHit.point;
     this.markerManager.placeMarker(fallbackHit.point);
     this.onFallbackPick?.(fallbackHit);
     this.onPick?.(fallbackHit);
@@ -222,9 +230,14 @@ export class PickingController {
   }
 
   clearMarker() {
+    this.lastPickWorldPosition = null;
     this.markerManager.clearMarker();
     if (this.onClear) {
       this.onClear();
     }
+  }
+
+  getLastPickWorldPosition() {
+    return this.lastPickWorldPosition?.clone?.() ?? this.lastPickWorldPosition ?? null;
   }
 }

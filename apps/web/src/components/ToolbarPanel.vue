@@ -7,6 +7,7 @@ defineProps({
 });
 
 defineEmits([
+  'create-robot-dog',
   'reset-camera',
   'toggle-bim',
   'debug-bim',
@@ -17,6 +18,7 @@ defineEmits([
 <template>
   <header class="toolbar">
     <div class="toolbar-group toolbar-group-main">
+      <button class="toolbar-compact-button" type="button" @click="$emit('create-robot-dog')">添加机器狗</button>
       <button class="toolbar-compact-button" type="button" @click="$emit('reset-camera')">重置</button>
       <button class="toolbar-compact-button" type="button" @click="$emit('toggle-bim')">BIM</button>
       <button class="toolbar-compact-button" type="button" @click="$emit('debug-bim')">调试</button>

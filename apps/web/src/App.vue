@@ -612,6 +612,7 @@ function closeContextMenu() {
   <div class="app-shell">
     <ToolbarPanel
       :status-message="snapshot.statusMessage"
+      @create-robot-dog="runToolbar('create-robot-dog')"
       @reset-camera="runToolbar('reset-camera')"
       @toggle-bim="runToolbar('toggle-bim')"
       @debug-bim="runToolbar('debug-bim')"

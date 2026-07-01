@@ -58,6 +58,7 @@ const TRANSFORM_EDITABLE_TYPES = new Set([
   'glb',
   'empty',
   'robot',
+  'robotDog',
   'cameraDevice',
   'device',
   'hotspot',
@@ -68,6 +69,7 @@ const TRANSFORM_EDITABLE_TYPES = new Set([
 const isBimProxy = computed(() => props.selection?.type === 'bim-proxy');
 const isGsplat = computed(() => props.selection?.type === 'gsplat');
 const isCameraDevice = computed(() => props.selection?.type === 'cameraDevice');
+const isRobotDog = computed(() => props.selection?.type === 'robotDog');
 const isTransformEditable = computed(() => TRANSFORM_EDITABLE_TYPES.has(props.selection?.type));
 const activeSelection = computed(() => (props.selectedAsset ? null : props.selection));
 const selectedAssetType = computed(() => String(props.selectedAsset?.type || '').toLowerCase());
@@ -81,6 +83,27 @@ const videoProjectionForm = reactive({
   softEdge: 0.05,
   flipY: false
 });
+const patrolForm = reactive({
+  speed: 2,
+  loop: false
+});
+
+const robotDogPatrol = computed(() => (
+  props.selection?.metadata?.patrol ?? {
+    state: 'idle',
+    routePoints: [],
+    routeEditing: false,
+    speed: 2,
+    loop: false
+  }
+));
+const patrolPointCount = computed(() => robotDogPatrol.value.routePoints?.length ?? 0);
+const patrolCanStart = computed(() => (
+  patrolPointCount.value >= 2 &&
+  !robotDogPatrol.value.routeEditing &&
+  !['running', 'paused'].includes(robotDogPatrol.value.state)
+));
+const patrolStateLabel = computed(() => robotDogPatrol.value.state ?? 'idle');
 
 const selectedAssetHasReadyRuntime = computed(() => (
   (['sog', 'gsplat', 'glb', 'gltf'].includes(selectedAssetType.value) && Number(props.selectedAsset?.size ?? 0) > 0) ||
@@ -167,6 +190,11 @@ function resetVideoProjectionForm() {
   videoProjectionForm.flipY = projection?.flipY ?? false;
 }
 
+function resetPatrolForm() {
+  patrolForm.speed = robotDogPatrol.value.speed ?? 2;
+  patrolForm.loop = robotDogPatrol.value.loop ?? false;
+}
+
 watch(
   () => props.selection?.id,
   () => {
@@ -212,6 +240,14 @@ watch(
   { immediate: true, deep: true }
 );
 
+watch(
+  () => props.selection?.metadata?.patrol,
+  () => {
+    resetPatrolForm();
+  },
+  { immediate: true, deep: true }
+);
+
 function emitSteps() {
   emit('action', 'set-steps', {
     move: stepForm.move,
@@ -243,6 +279,20 @@ function emitVideoProjectionPatch() {
     opacity: videoProjectionForm.opacity,
     softEdge: videoProjectionForm.softEdge,
     flipY: videoProjectionForm.flipY
+  });
+}
+
+function emitRobotDogSpeed() {
+  emit('action', 'robot-dog-set-speed', {
+    robotDogId: props.selection?.id,
+    speed: patrolForm.speed
+  });
+}
+
+function emitRobotDogLoop() {
+  emit('action', 'robot-dog-set-loop', {
+    robotDogId: props.selection?.id,
+    loop: patrolForm.loop
   });
 }
 </script>
@@ -467,6 +517,91 @@ function emitVideoProjectionPatch() {
               <button v-if="isGsplat" type="button" @click="emit('action', 'reload-base')">Reload Base SOG</button>
               <button v-if="isBimProxy" type="button" @click="emit('action', 'copy-alignment-json')">Copy JSON</button>
               <button type="button" @click="emit('action', 'delete-selected')">Delete</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="isRobotDog" class="inspector-block">
+          <div class="section-title">巡航路线</div>
+          <div class="inspector-meta-grid">
+            <div class="inspector-meta">
+              <span>路线状态</span>
+              <strong>{{ patrolStateLabel }}</strong>
+            </div>
+            <div class="inspector-meta">
+              <span>路线点数量</span>
+              <strong>{{ patrolPointCount }}</strong>
+            </div>
+            <div class="inspector-meta">
+              <span>编辑中</span>
+              <strong>{{ String(robotDogPatrol.routeEditing ?? false) }}</strong>
+            </div>
+            <div class="inspector-meta">
+              <span>循环巡航</span>
+              <strong>{{ String(patrolForm.loop) }}</strong>
+            </div>
+          </div>
+
+          <div class="inspector-subsection">
+            <div class="section-subtitle">参数</div>
+            <div class="inspector-grid">
+              <label class="inspector-field">
+                <span>速度</span>
+                <input v-model.number="patrolForm.speed" type="number" min="0.1" step="0.1" @change="emitRobotDogSpeed" />
+              </label>
+              <label class="inspector-field">
+                <span>循环巡航</span>
+                <input v-model="patrolForm.loop" type="checkbox" @change="emitRobotDogLoop" />
+              </label>
+            </div>
+          </div>
+
+          <div class="inspector-subsection">
+            <div class="section-subtitle">操作</div>
+            <div class="inspector-actions">
+              <button
+                type="button"
+                :disabled="robotDogPatrol.routeEditing"
+                @click="emit('action', 'robot-dog-start-edit', { robotDogId: activeSelection.id })"
+              >
+                开始编辑路线
+              </button>
+              <button
+                type="button"
+                :disabled="!robotDogPatrol.routeEditing"
+                @click="emit('action', 'robot-dog-stop-edit', { robotDogId: activeSelection.id })"
+              >
+                停止编辑路线
+              </button>
+              <button type="button" @click="emit('action', 'robot-dog-clear-route', { robotDogId: activeSelection.id })">清空路线</button>
+              <button
+                type="button"
+                :disabled="!patrolCanStart"
+                @click="emit('action', 'robot-dog-start-patrol', { robotDogId: activeSelection.id })"
+              >
+                开始巡航
+              </button>
+              <button
+                type="button"
+                :disabled="robotDogPatrol.state !== 'running'"
+                @click="emit('action', 'robot-dog-pause-patrol', { robotDogId: activeSelection.id })"
+              >
+                暂停
+              </button>
+              <button
+                type="button"
+                :disabled="robotDogPatrol.state !== 'paused'"
+                @click="emit('action', 'robot-dog-resume-patrol', { robotDogId: activeSelection.id })"
+              >
+                继续
+              </button>
+              <button
+                type="button"
+                :disabled="!['running', 'paused', 'finished', 'ready'].includes(robotDogPatrol.state)"
+                @click="emit('action', 'robot-dog-stop-patrol', { robotDogId: activeSelection.id })"
+              >
+                停止
+              </button>
             </div>
           </div>
         </div>
