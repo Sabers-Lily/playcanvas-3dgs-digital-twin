@@ -317,6 +317,9 @@ export class GsplatMp4ProjectorAdapter {
 
   destroy() {
     if (this.sceneMaterial) {
+      this.sceneMaterial.setParameter('uProjectorEnabled', 0);
+      this.sceneMaterial.setParameter('uProjectionOpacity', 0);
+      this.sceneMaterial.setParameter('uProjectedVideo', null);
       if (this.originalChunks.glslPs) {
         this.sceneMaterial.shaderChunks.glsl.set('gsplatModifyPS', this.originalChunks.glslPs);
       } else {
@@ -328,6 +331,7 @@ export class GsplatMp4ProjectorAdapter {
         this.sceneMaterial.shaderChunks.wgsl.delete('gsplatModifyPS');
       }
       this.sceneMaterial.update();
+      this.sceneMaterial = null;
     }
 
     if (this.videoTexture) {
