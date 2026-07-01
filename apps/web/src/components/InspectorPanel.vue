@@ -79,9 +79,7 @@ const videoProjectionForm = reactive({
   videoUrl: '',
   opacity: 1,
   softEdge: 0.05,
-  flipY: false,
-  calibrationState: 'idle',
-  calibrationIndex: 0
+  flipY: false
 });
 
 const selectedAssetHasReadyRuntime = computed(() => (
@@ -167,8 +165,6 @@ function resetVideoProjectionForm() {
   videoProjectionForm.opacity = projection?.opacity ?? 1;
   videoProjectionForm.softEdge = projection?.softEdge ?? 0.05;
   videoProjectionForm.flipY = projection?.flipY ?? false;
-  videoProjectionForm.calibrationState = projection?.calibrationState ?? 'idle';
-  videoProjectionForm.calibrationIndex = projection?.calibrationIndex ?? 0;
 }
 
 watch(

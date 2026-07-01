@@ -225,25 +225,9 @@ function createDefaultVideoProjectionMetadata(id, partial = {}) {
     id,
     enabled: partial.enabled ?? true,
     videoUrl: partial.videoUrl ?? '',
-    calibrationMode: partial.calibrationMode ?? 'fourPoint',
     opacity: readNumberValue(partial.opacity, 1),
     softEdge: readNumberValue(partial.softEdge, 0.05),
-    flipY: Boolean(partial.flipY),
-    calibrationState: partial.calibrationState ?? 'idle',
-    calibrationIndex: Number.isFinite(partial.calibrationIndex) ? partial.calibrationIndex : 0,
-    calibrationPoints: [0, 1, 2, 3].map((index) => {
-      const source = partial.calibrationPoints?.[index] ?? null;
-      return {
-        index,
-        videoUv: Array.isArray(source?.videoUv) ? [...source.videoUv] : (
-          index === 0 ? [0, 1] :
-          index === 1 ? [1, 1] :
-          index === 2 ? [1, 0] :
-          [0, 0]
-        ),
-        worldPoint: Array.isArray(source?.worldPoint) ? [...source.worldPoint] : null
-      };
-    })
+    flipY: Boolean(partial.flipY)
   };
 }
 
@@ -459,9 +443,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     syncCameraProjectionMetadata(cameraId, {
-      ...projection,
-      calibrationState: projection.videoUrl ? 'ready' : 'idle',
-      calibrationIndex: projection.videoUrl ? 4 : 0
+      ...projection
     });
 
     return activeMp4Projector;
@@ -488,36 +470,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     window.selectionManager = selectionManager;
     window.placementMode = placementMode;
     window.gsplatVideoProjector = activeMp4Projector;
-    window.bindTestProjection = (cameraId = 'camera_0') => enableCameraVideoProjection(cameraId, {
-      videoUrl: '/assets/test.mp4'
-    });
-    window.testVideoPreviewPlane = async (cameraId = 'camera_0') => {
-      return enableCameraVideoProjection(cameraId, {
-        videoUrl: '/assets/test.mp4'
-      });
-    };
-    window.testGsplatForcePurple = async (cameraId = 'camera_0') => {
-      return enableCameraVideoProjection(cameraId, {
-        videoUrl: '/assets/test.mp4'
-      });
-    };
-    window.testCameraProjectionUv = async (cameraId = 'camera_0') => {
-      return enableCameraVideoProjection(cameraId, {
-        videoUrl: '/assets/test.mp4'
-      });
-    };
-    window.testCameraProjectionNoDepth = async (cameraId = 'camera_0') => {
-      return enableCameraVideoProjection(cameraId, {
-        videoUrl: '/assets/test.mp4'
-      });
-    };
-    window.testCameraProjection = async (cameraId = 'camera_0') => {
-      return enableCameraVideoProjection(cameraId, {
-        videoUrl: '/assets/test.mp4',
-        shaderDebugMode: 'projectVideo',
-        forceTestVideo: true
-      });
-    };
   }
 
   function formatCameraState() {
