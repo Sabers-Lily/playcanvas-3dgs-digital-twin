@@ -77,6 +77,93 @@ function sanitizeQuadPoints(points) {
   });
 }
 
+function solveLinearSystem(matrix, values) {
+  const size = values.length;
+  const augmented = matrix.map((row, rowIndex) => [...row, values[rowIndex]]);
+
+  for (let pivot = 0; pivot < size; pivot += 1) {
+    let maxRow = pivot;
+    let maxValue = Math.abs(augmented[pivot][pivot]);
+
+    for (let row = pivot + 1; row < size; row += 1) {
+      const value = Math.abs(augmented[row][pivot]);
+      if (value > maxValue) {
+        maxValue = value;
+        maxRow = row;
+      }
+    }
+
+    if (maxValue < 1e-8) {
+      return null;
+    }
+
+    if (maxRow !== pivot) {
+      const temp = augmented[pivot];
+      augmented[pivot] = augmented[maxRow];
+      augmented[maxRow] = temp;
+    }
+
+    const pivotValue = augmented[pivot][pivot];
+    for (let column = pivot; column <= size; column += 1) {
+      augmented[pivot][column] /= pivotValue;
+    }
+
+    for (let row = 0; row < size; row += 1) {
+      if (row === pivot) {
+        continue;
+      }
+
+      const factor = augmented[row][pivot];
+      if (Math.abs(factor) < 1e-8) {
+        continue;
+      }
+
+      for (let column = pivot; column <= size; column += 1) {
+        augmented[row][column] -= factor * augmented[pivot][column];
+      }
+    }
+  }
+
+  return augmented.map((row) => row[size]);
+}
+
+function computeQuadHomography(screenPoints) {
+  if (!Array.isArray(screenPoints) || screenPoints.length !== 4) {
+    return null;
+  }
+
+  const uvPoints = [
+    [0, 0],
+    [1, 0],
+    [1, 1],
+    [0, 1]
+  ];
+
+  const matrix = [];
+  const values = [];
+
+  for (let index = 0; index < 4; index += 1) {
+    const [x, y] = screenPoints[index];
+    const [u, v] = uvPoints[index];
+
+    matrix.push([x, y, 1, 0, 0, 0, -u * x, -u * y]);
+    values.push(u);
+    matrix.push([0, 0, 0, x, y, 1, -v * x, -v * y]);
+    values.push(v);
+  }
+
+  const solution = solveLinearSystem(matrix, values);
+  if (!solution) {
+    return null;
+  }
+
+  return [
+    solution[0], solution[1], solution[2],
+    solution[3], solution[4], solution[5],
+    solution[6], solution[7], 1
+  ];
+}
+
 export class GsplatMp4ProjectorAdapter {
   constructor({
     app,
@@ -146,6 +233,11 @@ export class GsplatMp4ProjectorAdapter {
       new Float32Array(2),
       new Float32Array(2),
       new Float32Array(2)
+    ];
+    this.quadUvHomographyRows = [
+      new Float32Array(3),
+      new Float32Array(3),
+      new Float32Array(3)
     ];
   }
 
@@ -251,6 +343,9 @@ export class GsplatMp4ProjectorAdapter {
       'uniform vec2 uQuadScreenP1;',
       'uniform vec2 uQuadScreenP2;',
       'uniform vec2 uQuadScreenP3;',
+      'uniform vec3 uQuadUvHomographyRow0;',
+      'uniform vec3 uQuadUvHomographyRow1;',
+      'uniform vec3 uQuadUvHomographyRow2;',
       'uniform float uQuadPlaneTolerance;',
       'vec3 gsplatProjectorReconstructWorldPos() {',
       '  vec2 ndcXY = (gl_FragCoord.xy / uScreenSize) * 2.0 - 1.0;',
@@ -312,23 +407,41 @@ export class GsplatMp4ProjectorAdapter {
       '  float u = 1.0 - v - w;',
       '  return vec3(u, v, w);',
       '}',
-      'float gsplatProjectorScreenTriangleUv(vec2 p, vec2 a, vec2 b, vec2 c, vec2 uva, vec2 uvb, vec2 uvc, out vec2 uv, out float edgeFactor) {',
-      '  vec3 bc = gsplatProjectorBarycentric2D(p, a, b, c);',
-      '  if (bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0) return 0.0;',
-      '  uv = uva * bc.x + uvb * bc.y + uvc * bc.z;',
-      '  float minEdge = min(bc.x, min(bc.y, bc.z));',
-      '  if (uProjectionSoftEdge <= 1e-4) {',
-      '    edgeFactor = 1.0;',
-      '  } else {',
-      '    edgeFactor = smoothstep(0.0, uProjectionSoftEdge, minEdge);',
-      '  }',
-      '  return 1.0;',
+      'float gsplatProjectorEdgeCross(vec2 a, vec2 b, vec2 p) {',
+      '  vec2 edge = b - a;',
+      '  vec2 toPoint = p - a;',
+      '  return edge.x * toPoint.y - edge.y * toPoint.x;',
+      '}',
+      'float gsplatProjectorEdgeDistance(vec2 a, vec2 b, vec2 p) {',
+      '  vec2 edge = b - a;',
+      '  float edgeLength = length(edge);',
+      '  if (edgeLength < 1e-6) return 0.0;',
+      '  return abs(gsplatProjectorEdgeCross(a, b, p)) / edgeLength;',
+      '}',
+      'vec2 gsplatProjectorApplyQuadHomography(vec2 screenUv) {',
+      '  float denom = dot(uQuadUvHomographyRow2, vec3(screenUv, 1.0));',
+      '  if (abs(denom) < 1e-6) return vec2(-1.0);',
+      '  float u = dot(uQuadUvHomographyRow0, vec3(screenUv, 1.0)) / denom;',
+      '  float v = dot(uQuadUvHomographyRow1, vec3(screenUv, 1.0)) / denom;',
+      '  return vec2(u, v);',
       '}',
       'float gsplatProjectorOverlayUv(out vec2 uv, out float edgeFactor) {',
       '  vec2 screenUv = gl_FragCoord.xy / uScreenSize;',
-      '  if (gsplatProjectorScreenTriangleUv(screenUv, uQuadScreenP0, uQuadScreenP1, uQuadScreenP2, vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(1.0, 1.0), uv, edgeFactor) > 0.5) return 1.0;',
-      '  if (gsplatProjectorScreenTriangleUv(screenUv, uQuadScreenP0, uQuadScreenP2, uQuadScreenP3, vec2(0.0, 0.0), vec2(1.0, 1.0), vec2(0.0, 1.0), uv, edgeFactor) > 0.5) return 1.0;',
-      '  return 0.0;',
+      '  float orientation = gsplatProjectorEdgeCross(uQuadScreenP0, uQuadScreenP1, uQuadScreenP2);',
+      '  float signFactor = orientation >= 0.0 ? 1.0 : -1.0;',
+      '  float c0 = signFactor * gsplatProjectorEdgeCross(uQuadScreenP0, uQuadScreenP1, screenUv);',
+      '  float c1 = signFactor * gsplatProjectorEdgeCross(uQuadScreenP1, uQuadScreenP2, screenUv);',
+      '  float c2 = signFactor * gsplatProjectorEdgeCross(uQuadScreenP2, uQuadScreenP3, screenUv);',
+      '  float c3 = signFactor * gsplatProjectorEdgeCross(uQuadScreenP3, uQuadScreenP0, screenUv);',
+      '  if (c0 < 0.0 || c1 < 0.0 || c2 < 0.0 || c3 < 0.0) return 0.0;',
+      '  uv = gsplatProjectorApplyQuadHomography(screenUv);',
+      '  float minEdgeDistance = min(min(gsplatProjectorEdgeDistance(uQuadScreenP0, uQuadScreenP1, screenUv), gsplatProjectorEdgeDistance(uQuadScreenP1, uQuadScreenP2, screenUv)), min(gsplatProjectorEdgeDistance(uQuadScreenP2, uQuadScreenP3, screenUv), gsplatProjectorEdgeDistance(uQuadScreenP3, uQuadScreenP0, screenUv)));',
+      '  if (uProjectionSoftEdge <= 1e-4) {',
+      '    edgeFactor = 1.0;',
+      '  } else {',
+      '    edgeFactor = smoothstep(0.0, uProjectionSoftEdge, minEdgeDistance);',
+      '  }',
+      '  return uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0 ? 1.0 : 0.0;',
       '}',
       'void modifySplatColor(vec2 gaussianUV, inout vec4 color) {',
       '  if (uProjectorEnabled < 0.5) return;',
@@ -374,6 +487,9 @@ export class GsplatMp4ProjectorAdapter {
       'uniform uQuadScreenP1: vec2f;',
       'uniform uQuadScreenP2: vec2f;',
       'uniform uQuadScreenP3: vec2f;',
+      'uniform uQuadUvHomographyRow0: vec3f;',
+      'uniform uQuadUvHomographyRow1: vec3f;',
+      'uniform uQuadUvHomographyRow2: vec3f;',
       'uniform uQuadPlaneTolerance: f32;',
       'var uProjectedVideo: texture_2d<f32>;',
       'var uProjectedVideoSampler: sampler;',
@@ -437,19 +553,38 @@ export class GsplatMp4ProjectorAdapter {
       '  let bu = 1.0 - bv - bw;',
       '  return vec3f(bu, bv, bw);',
       '}',
-      'fn gsplatProjectorScreenTriangleUv(p: vec2f, a: vec2f, b: vec2f, c: vec2f, uva: vec2f, uvb: vec2f, uvc: vec2f) -> vec4f {',
-      '  let bc = gsplatProjectorBarycentric2D(p, a, b, c);',
-      '  if (bc.x < 0.0 || bc.y < 0.0 || bc.z < 0.0) { return vec4f(0.0, 0.0, 0.0, 0.0); }',
-      '  let uv = uva * bc.x + uvb * bc.y + uvc * bc.z;',
-      '  let minEdge = min(bc.x, min(bc.y, bc.z));',
-      '  let edgeFactor = select(smoothstep(0.0, uniform.uProjectionSoftEdge, minEdge), 1.0, uniform.uProjectionSoftEdge <= 1e-4);',
-      '  return vec4f(1.0, uv.x, uv.y, edgeFactor);',
+      'fn gsplatProjectorEdgeCross(a: vec2f, b: vec2f, p: vec2f) -> f32 {',
+      '  let edge = b - a;',
+      '  let toPoint = p - a;',
+      '  return edge.x * toPoint.y - edge.y * toPoint.x;',
+      '}',
+      'fn gsplatProjectorEdgeDistance(a: vec2f, b: vec2f, p: vec2f) -> f32 {',
+      '  let edge = b - a;',
+      '  let edgeLength = length(edge);',
+      '  if (edgeLength < 1e-6) { return 0.0; }',
+      '  return abs(gsplatProjectorEdgeCross(a, b, p)) / edgeLength;',
+      '}',
+      'fn gsplatProjectorApplyQuadHomography(screenUv: vec2f) -> vec2f {',
+      '  let denom = dot(uniform.uQuadUvHomographyRow2, vec3f(screenUv, 1.0));',
+      '  if (abs(denom) < 1e-6) { return vec2f(-1.0, -1.0); }',
+      '  let u = dot(uniform.uQuadUvHomographyRow0, vec3f(screenUv, 1.0)) / denom;',
+      '  let v = dot(uniform.uQuadUvHomographyRow1, vec3f(screenUv, 1.0)) / denom;',
+      '  return vec2f(u, v);',
       '}',
       'fn gsplatProjectorOverlayUv() -> vec4f {',
       '  let screenUv = pcPosition.xy / uniform.uScreenSize;',
-      '  let a = gsplatProjectorScreenTriangleUv(screenUv, uniform.uQuadScreenP0, uniform.uQuadScreenP1, uniform.uQuadScreenP2, vec2f(0.0, 0.0), vec2f(1.0, 0.0), vec2f(1.0, 1.0));',
-      '  if (a.x > 0.5) { return a; }',
-      '  return gsplatProjectorScreenTriangleUv(screenUv, uniform.uQuadScreenP0, uniform.uQuadScreenP2, uniform.uQuadScreenP3, vec2f(0.0, 0.0), vec2f(1.0, 1.0), vec2f(0.0, 1.0));',
+      '  let orientation = gsplatProjectorEdgeCross(uniform.uQuadScreenP0, uniform.uQuadScreenP1, uniform.uQuadScreenP2);',
+      '  let signFactor = select(-1.0, 1.0, orientation >= 0.0);',
+      '  let c0 = signFactor * gsplatProjectorEdgeCross(uniform.uQuadScreenP0, uniform.uQuadScreenP1, screenUv);',
+      '  let c1 = signFactor * gsplatProjectorEdgeCross(uniform.uQuadScreenP1, uniform.uQuadScreenP2, screenUv);',
+      '  let c2 = signFactor * gsplatProjectorEdgeCross(uniform.uQuadScreenP2, uniform.uQuadScreenP3, screenUv);',
+      '  let c3 = signFactor * gsplatProjectorEdgeCross(uniform.uQuadScreenP3, uniform.uQuadScreenP0, screenUv);',
+      '  if (c0 < 0.0 || c1 < 0.0 || c2 < 0.0 || c3 < 0.0) { return vec4f(0.0, 0.0, 0.0, 0.0); }',
+      '  let uv = gsplatProjectorApplyQuadHomography(screenUv);',
+      '  let minEdgeDistance = min(min(gsplatProjectorEdgeDistance(uniform.uQuadScreenP0, uniform.uQuadScreenP1, screenUv), gsplatProjectorEdgeDistance(uniform.uQuadScreenP1, uniform.uQuadScreenP2, screenUv)), min(gsplatProjectorEdgeDistance(uniform.uQuadScreenP2, uniform.uQuadScreenP3, screenUv), gsplatProjectorEdgeDistance(uniform.uQuadScreenP3, uniform.uQuadScreenP0, screenUv)));',
+      '  let edgeFactor = select(smoothstep(0.0, uniform.uProjectionSoftEdge, minEdgeDistance), 1.0, uniform.uProjectionSoftEdge <= 1e-4);',
+      '  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { return vec4f(0.0, 0.0, 0.0, 0.0); }',
+      '  return vec4f(1.0, uv.x, uv.y, edgeFactor);',
       '}',
       'fn modifySplatColor(gaussianUV: vec2f, color: ptr<function, vec4f>) {',
       '  if (uniform.uProjectorEnabled < 0.5) { return; }',
@@ -524,6 +659,7 @@ export class GsplatMp4ProjectorAdapter {
     const material = this.sceneMaterial;
     if (this.mode === PROJECTION_MODES.QUAD_OVERLAY) {
       this.updateQuadScreenPoints();
+      this.updateQuadUvHomography();
     }
     material.setParameter('uProjectedVideo', this.videoTexture);
     material.setParameter('uMainInvViewProj', this.mainInvViewProj.data);
@@ -544,6 +680,10 @@ export class GsplatMp4ProjectorAdapter {
       material.setParameter(`uQuadP${index}`, this.quadUniforms[index]);
       material.setParameter(`uQuadScreenP${index}`, this.quadScreenUniforms[index]);
     });
+
+    material.setParameter('uQuadUvHomographyRow0', this.quadUvHomographyRows[0]);
+    material.setParameter('uQuadUvHomographyRow1', this.quadUvHomographyRows[1]);
+    material.setParameter('uQuadUvHomographyRow2', this.quadUvHomographyRows[2]);
   }
 
   updateQuadScreenPoints() {
@@ -562,6 +702,24 @@ export class GsplatMp4ProjectorAdapter {
       this.quadScreenUniforms[index][0] = screen.x / width;
       this.quadScreenUniforms[index][1] = 1 - (screen.y / height);
     });
+  }
+
+  updateQuadUvHomography() {
+    const screenPoints = this.quadScreenUniforms.map((point) => [point[0], point[1]]);
+    const homography = computeQuadHomography(screenPoints);
+    if (!homography) {
+      return;
+    }
+
+    this.quadUvHomographyRows[0][0] = homography[0];
+    this.quadUvHomographyRows[0][1] = homography[1];
+    this.quadUvHomographyRows[0][2] = homography[2];
+    this.quadUvHomographyRows[1][0] = homography[3];
+    this.quadUvHomographyRows[1][1] = homography[4];
+    this.quadUvHomographyRows[1][2] = homography[5];
+    this.quadUvHomographyRows[2][0] = homography[6];
+    this.quadUvHomographyRows[2][1] = homography[7];
+    this.quadUvHomographyRows[2][2] = homography[8];
   }
 
   patch(options = {}) {
