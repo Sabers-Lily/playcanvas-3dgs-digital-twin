@@ -1,4 +1,6 @@
 <script setup>
+import { UI_FLAGS } from '../config/uiFlags.js';
+
 defineProps({
   statusMessage: {
     type: String,
@@ -17,7 +19,7 @@ defineEmits([
 
 <template>
   <header class="toolbar">
-    <div class="toolbar-group toolbar-group-main">
+    <div v-if="UI_FLAGS.showDebugToolbar" class="toolbar-group toolbar-group-main">
       <button class="toolbar-compact-button" type="button" @click="$emit('create-robot-dog')">添加机器狗</button>
       <button class="toolbar-compact-button" type="button" @click="$emit('reset-camera')">重置</button>
       <button class="toolbar-compact-button" type="button" @click="$emit('toggle-bim')">BIM</button>

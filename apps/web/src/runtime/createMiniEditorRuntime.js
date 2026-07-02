@@ -10,6 +10,7 @@ import { PickingController } from '../engine/PickingController.js';
 import { RobotDogPatrolController } from '../engine/RobotDogPatrolController.js';
 import { SceneObjectManager } from '../editor/SceneObjectManager.js';
 import { SelectionManager } from '../editor/SelectionManager.js';
+import { UI_FLAGS } from '../config/uiFlags.js';
 
 const OBJECT_IDS = {
   camera: 'camera',
@@ -340,34 +341,40 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   });
   cameraController.reset();
 
-  sceneObjectManager.addObject({
-    id: OBJECT_IDS.camera,
-    name: camera.name,
-    displayName: camera.name,
-    type: 'camera',
-    entity: camera,
-    transform: getTransformFromEntity(camera),
-    visible: camera.enabled,
-    status: 'active',
-    canHide: false,
-    protected: true,
-    metadata: {}
-  });
+  if (UI_FLAGS.showDefaultCameraInHierarchy) {
+    sceneObjectManager.addObject({
+      id: OBJECT_IDS.camera,
+      name: camera.name,
+      displayName: camera.name,
+      type: 'camera',
+      entity: camera,
+      transform: getTransformFromEntity(camera),
+      visible: camera.enabled,
+      status: 'active',
+      canHide: false,
+      protected: true,
+      metadata: {}
+    });
+  }
 
   const debugEntity = bimProxyManager.createFallbackGroundProxy();
-  sceneObjectManager.addObject({
-    id: OBJECT_IDS.debug,
-    name: 'Debug Helpers',
-    displayName: 'Debug Helpers',
-    type: 'debug',
-    entity: debugEntity,
-    transform: getTransformFromEntity(debugEntity),
-    visible: debugEntity.enabled,
-    status: 'ready',
-    canHide: true,
-    protected: true,
-    metadata: {}
-  });
+  if (!UI_FLAGS.showDebugHelpersInHierarchy) {
+    debugEntity.enabled = false;
+  } else {
+    sceneObjectManager.addObject({
+      id: OBJECT_IDS.debug,
+      name: 'Debug Helpers',
+      displayName: 'Debug Helpers',
+      type: 'debug',
+      entity: debugEntity,
+      transform: getTransformFromEntity(debugEntity),
+      visible: debugEntity.enabled,
+      status: 'ready',
+      canHide: true,
+      protected: true,
+      metadata: {}
+    });
+  }
 
   const statusState = {
     sog: {
@@ -798,30 +805,35 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         size: null,
         url: ASSET_PATHS.baseSog,
         createdAt: null
-      },
-      {
-        id: 'bim-proxy',
-        kind: 'bim',
-        label: ASSET_LABELS.bimProxy,
-        status: assetAvailability[ASSET_PATHS.bimProxy],
-        sourceName: ASSET_LABELS.bimProxy,
-        type: 'glb',
-        size: null,
-        url: ASSET_PATHS.bimProxy,
-        createdAt: null
-      },
-      {
-        id: 'converted-sog',
-        kind: 'gsplat',
-        label: 'converted/map.sog',
-        status: assetAvailability[ASSET_PATHS.convertedSog],
-        sourceName: 'converted/map.sog',
-        type: 'gsplat',
-        size: null,
-        url: ASSET_PATHS.convertedSog,
-        createdAt: null
       }
     ];
+
+    if (UI_FLAGS.showDebugAssets) {
+      builtInAssets.push(
+        {
+          id: 'bim-proxy',
+          kind: 'bim',
+          label: ASSET_LABELS.bimProxy,
+          status: assetAvailability[ASSET_PATHS.bimProxy],
+          sourceName: ASSET_LABELS.bimProxy,
+          type: 'glb',
+          size: null,
+          url: ASSET_PATHS.bimProxy,
+          createdAt: null
+        },
+        {
+          id: 'converted-sog',
+          kind: 'gsplat',
+          label: 'converted/map.sog',
+          status: assetAvailability[ASSET_PATHS.convertedSog],
+          sourceName: 'converted/map.sog',
+          type: 'gsplat',
+          size: null,
+          url: ASSET_PATHS.convertedSog,
+          createdAt: null
+        }
+      );
+    }
 
     const uploadedAssets = state.uploadedAssets.map((asset) => ({
       id: asset.id,
@@ -3154,14 +3166,23 @@ function setVideoProjectionMode(cameraId, mode) {
 
   });
 
-  Promise.all([
-    checkAssetAvailability(ASSET_PATHS.baseSog, ASSET_LABELS.baseSog),
-    checkAssetAvailability(ASSET_PATHS.convertedSog, 'converted/map.sog'),
-    checkAssetAvailability(ASSET_PATHS.bimProxy, ASSET_LABELS.bimProxy)
-  ]).then(([baseAvailable, convertedAvailable, bimAvailable]) => {
-    console.info(
-      `Asset availability summary: base.sog=${baseAvailable ? 'available' : 'missing'}, converted/map.sog=${convertedAvailable ? 'available' : 'missing'}, ${ASSET_LABELS.bimProxy}=${bimAvailable ? 'available' : 'missing'}`
+  const assetChecks = [checkAssetAvailability(ASSET_PATHS.baseSog, ASSET_LABELS.baseSog)];
+  if (UI_FLAGS.showDebugAssets) {
+    assetChecks.push(
+      checkAssetAvailability(ASSET_PATHS.convertedSog, 'converted/map.sog'),
+      checkAssetAvailability(ASSET_PATHS.bimProxy, ASSET_LABELS.bimProxy)
     );
+  }
+
+  Promise.all(assetChecks).then((results) => {
+    const [baseAvailable, convertedAvailable = false, bimAvailable = false] = results;
+    if (UI_FLAGS.showDebugAssets) {
+      console.info(
+        `Asset availability summary: base.sog=${baseAvailable ? 'available' : 'missing'}, converted/map.sog=${convertedAvailable ? 'available' : 'missing'}, ${ASSET_LABELS.bimProxy}=${bimAvailable ? 'available' : 'missing'}`
+      );
+    } else {
+      console.info(`Asset availability summary: base.sog=${baseAvailable ? 'available' : 'missing'}`);
+    }
     updateStatusMessage('Asset checks complete');
   });
 
@@ -3170,7 +3191,7 @@ function setVideoProjectionMode(cameraId, mode) {
     robotDogPatrolController.update(dt ?? 0);
   });
 
-  if (!sceneObjectManager.getObject('camera_0')) {
+  if (UI_FLAGS.createDefaultCameraDevice && !sceneObjectManager.getObject('camera_0')) {
     createBusinessSceneObject('cameraDevice', {
       id: 'camera_0',
       displayName: 'camera_0'

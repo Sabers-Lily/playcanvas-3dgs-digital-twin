@@ -7,6 +7,7 @@ import InspectorPanel from './components/InspectorPanel.vue';
 import BottomPanel from './components/BottomPanel.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import { createMiniEditorRuntime } from './runtime/createMiniEditorRuntime.js';
+import { UI_FLAGS } from './config/uiFlags.js';
 import { fetchApiHealth } from './api/healthApi.js';
 import {
   deleteAsset,
@@ -183,12 +184,13 @@ async function checkApiHealth() {
   try {
     await fetchApiHealth();
     snapshot.apiStatus = 'connected';
-    prependUiLog('API: connected');
     console.log('[API] health check ok');
   } catch (error) {
     snapshot.apiStatus = 'offline';
-    prependUiLog('API: offline');
     console.warn('[API] health check failed:', error);
+    if (UI_FLAGS.showApiDebugStatus) {
+      prependUiLog('API: offline');
+    }
   }
 }
 
@@ -648,7 +650,7 @@ function closeContextMenu() {
           <canvas id="app-canvas" ref="canvasRef"></canvas>
         </ViewportPanel>
 
-      <BottomPanel
+        <BottomPanel
           :assets="snapshot.assets"
           :selected-asset-id="snapshot.selectedAssetId"
           :logs="snapshot.logs"

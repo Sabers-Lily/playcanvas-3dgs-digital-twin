@@ -50,6 +50,20 @@ const stepForm = reactive({
   rotate: 1,
   scale: 0.01
 });
+const videoProjectionForm = reactive({
+  enabled: true,
+  mode: 'cameraFrustum',
+  videoUrl: '',
+  opacity: 1,
+  softEdge: 0.05,
+  flipY: false,
+  replaceMode: false,
+  quadPlaneTolerance: 0.25
+});
+const patrolForm = reactive({
+  speed: 2,
+  loop: false
+});
 
 const TRANSFORM_EDITABLE_TYPES = new Set([
   'gsplat',
@@ -76,20 +90,6 @@ const selectedAssetType = computed(() => String(props.selectedAsset?.type || '')
 const projectionToggleLabel = computed(() => (
   videoProjectionForm.enabled ? 'Disable Projection' : 'Enable Projection'
 ));
-const videoProjectionForm = reactive({
-  enabled: true,
-  mode: 'cameraFrustum',
-  videoUrl: '',
-  opacity: 1,
-  softEdge: 0.05,
-  flipY: false,
-  replaceMode: false,
-  quadPlaneTolerance: 0.25
-});
-const patrolForm = reactive({
-  speed: 2,
-  loop: false
-});
 const videoProjection = computed(() => props.selection?.metadata?.videoProjection ?? {});
 const quadPointCount = computed(() => videoProjection.value.quadPoints?.length ?? 0);
 const isQuadProjectionMode = computed(() => videoProjectionForm.mode === 'quad');
@@ -400,32 +400,6 @@ function emitRobotDogLoop() {
           </div>
           <div v-if="selectedAssetHint" class="inspector-note">{{ selectedAssetHint }}</div>
         </div>
-
-        <div v-if="selectedAsset.derivedAssets?.length" class="inspector-subsection">
-          <div class="section-subtitle">Derived Assets</div>
-          <div class="inspector-meta-grid">
-            <div
-              v-for="derivedAsset in selectedAsset.derivedAssets"
-              :key="derivedAsset.id"
-              class="inspector-meta inspector-meta-wide"
-            >
-              <span>{{ derivedAsset.type.toUpperCase() }}</span>
-              <strong :title="`${derivedAsset.sourceName} (${derivedAsset.status})`">
-                {{ derivedAsset.sourceName }} / {{ derivedAsset.status }}
-              </strong>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="selectedAsset.sourceAsset" class="inspector-subsection">
-          <div class="section-subtitle">Source Asset</div>
-          <div class="inspector-meta-grid">
-            <div class="inspector-meta inspector-meta-wide">
-              <span>Source</span>
-              <strong :title="selectedAsset.sourceAsset.sourceName">{{ selectedAsset.sourceAsset.sourceName }}</strong>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div v-else-if="!activeSelection" class="inspector-block">
@@ -630,87 +604,6 @@ function emitRobotDogLoop() {
           </div>
         </div>
 
-        <div v-if="false && isCameraDevice" class="inspector-block">
-          <div class="section-title">VIDEO PROJECTION</div>
-          <div class="inspector-meta-grid">
-            <div class="inspector-meta">
-              <span>Enabled</span>
-              <strong>{{ String(videoProjectionForm.enabled) }}</strong>
-            </div>
-            <div class="inspector-meta">
-              <span>模式</span>
-              <strong>{{ videoProjectionForm.mode === 'quad' ? '四点区域投影' : '摄像头视锥投影' }}</strong>
-            </div>
-            <div class="inspector-meta">
-              <span>已选点数</span>
-              <strong>{{ quadPointCount }} / 4</strong>
-            </div>
-            <div class="inspector-meta inspector-meta-wide">
-              <span>Video</span>
-              <strong :title="videoProjectionForm.videoUrl || '-'">{{ videoProjectionForm.videoUrl || '-' }}</strong>
-            </div>
-          </div>
-
-          <div class="inspector-subsection">
-            <div class="section-subtitle">Parameters</div>
-            <div class="inspector-grid">
-              <label class="inspector-field">
-                <span>投影模式</span>
-                <select v-model="videoProjectionForm.mode" @change="emitVideoProjectionPatch">
-                  <option value="cameraFrustum">摄像头视锥投影</option>
-                  <option value="quad">四点区域投影</option>
-                </select>
-              </label>
-              <label class="inspector-field">
-                <span>Opacity</span>
-                <input v-model.number="videoProjectionForm.opacity" type="number" min="0" max="1" step="0.05" @change="emitVideoProjectionPatch" />
-              </label>
-              <label class="inspector-field">
-                <span>Soft Edge</span>
-                <input v-model.number="videoProjectionForm.softEdge" type="number" min="0" max="1" step="0.01" @change="emitVideoProjectionPatch" />
-              </label>
-              <label class="inspector-field">
-                <span>Flip Y</span>
-                <input v-model="videoProjectionForm.flipY" type="checkbox" @change="emitVideoProjectionPatch" />
-              </label>
-            </div>
-          </div>
-
-          <div v-if="isQuadProjectionMode" class="inspector-subsection">
-            <div class="section-subtitle">四点区域投影</div>
-            <div class="inspector-meta-grid">
-              <div class="inspector-meta">
-                <span>已选点数</span>
-                <strong>{{ quadPointCount }} / 4</strong>
-              </div>
-              <div class="inspector-meta inspector-meta-wide">
-                <span>点位顺序</span>
-                <strong>1 左上, 2 右上, 3 右下, 4 左下</strong>
-              </div>
-            </div>
-            <div class="inspector-grid">
-              <label class="inspector-field">
-                <span>Plane Tolerance</span>
-                <input v-model.number="videoProjectionForm.quadPlaneTolerance" type="number" min="0.001" step="0.01" @change="emitVideoProjectionPatch" />
-              </label>
-            </div>
-            <div class="inspector-actions">
-              <button type="button" @click="emit('action', 'start-quad-video-projection-editing')">开始选择四点</button>
-              <button type="button" @click="emit('action', 'stop-quad-video-projection-editing')">停止选择</button>
-              <button type="button" @click="emit('action', 'clear-quad-video-projection-points')">清空四点</button>
-              <button type="button" :disabled="quadPointCount !== 4" @click="emit('action', 'apply-quad-video-projection')">应用四点投影</button>
-            </div>
-          </div>
-
-          <div class="inspector-subsection">
-            <div class="section-subtitle">Actions</div>
-            <div class="inspector-actions">
-              <button type="button" @click="emit('action', 'bind-test-video')">Bind test.mp4</button>
-              <button type="button" @click="emit('action', 'toggle-projection-enabled')">{{ projectionToggleLabel }}</button>
-            </div>
-          </div>
-        </div>
-
         <div v-else-if="isCameraDevice" class="inspector-block">
           <div class="section-title">VIDEO PROJECTION</div>
           <div class="inspector-meta-grid">
@@ -819,24 +712,6 @@ function emitRobotDogLoop() {
             <button type="button" @click="emit('action', 'clear-marker')">Clear Marker</button>
             <button type="button" @click="emit('action', 'focus-marker')">Focus Marker</button>
             <button type="button" @click="emit('action', 'delete-selected')">Delete</button>
-          </div>
-        </div>
-
-        <div v-else-if="activeSelection.type === 'camera'" class="inspector-block">
-          <div class="inspector-meta-grid">
-            <div class="inspector-meta inspector-meta-wide"><span>Target</span><strong>{{ cameraState.target }}</strong></div>
-            <div class="inspector-meta"><span>Distance</span><strong>{{ cameraState.distance }}</strong></div>
-            <div class="inspector-meta"><span>Yaw</span><strong>{{ cameraState.yaw }}</strong></div>
-            <div class="inspector-meta"><span>Pitch</span><strong>{{ cameraState.pitch }}</strong></div>
-          </div>
-          <div class="inspector-actions">
-            <button type="button" @click="emit('action', 'reset-camera')">Reset Camera</button>
-          </div>
-        </div>
-
-        <div v-else-if="activeSelection.type === 'debug'" class="inspector-block">
-          <div class="inspector-actions">
-            <button type="button" @click="emit('action', 'toggle-debug')">Show/Hide Debug</button>
           </div>
         </div>
 
