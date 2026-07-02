@@ -273,6 +273,7 @@ function createDefaultVideoProjectionMetadata(id, partial = {}) {
     opacity: readNumberValue(partial.opacity, 0.85),
     softEdge: readNumberValue(partial.softEdge, 0.05),
     flipY: Boolean(partial.flipY),
+    replaceMode: Boolean(partial.replaceMode),
     quadEditing: Boolean(partial.quadEditing),
     quadPoints: cloneQuadPoints(partial.quadPoints),
     quadPlaneTolerance: readNumberValue(partial.quadPlaneTolerance, 0.25)
@@ -491,6 +492,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         opacity: projection.opacity,
         softEdge: projection.softEdge,
         flipY: projection.flipY,
+        replaceMode: projection.replaceMode,
         quadPoints: projection.quadPoints,
         quadPlaneTolerance: projection.quadPlaneTolerance,
         enabledProjection: projection.enabled,
@@ -512,6 +514,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         opacity: projection.opacity,
         softEdge: projection.softEdge,
         flipY: projection.flipY,
+        replaceMode: projection.replaceMode,
         quadPoints: projection.quadPoints,
         quadPlaneTolerance: projection.quadPlaneTolerance,
         enabledProjection: projection.enabled
@@ -609,7 +612,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     const nextProjection = syncCameraProjectionMetadata(cameraId, {
       ...currentProjection,
-      mode: 'quad',
+      mode: currentProjection.mode === 'quadOverlay' ? 'quadOverlay' : 'quad',
       quadEditing: !editingCompleted,
       quadPoints
     });
@@ -658,6 +661,14 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return;
     }
 
+    console.log('[Projection] sync active projector', {
+      cameraId,
+      mode: projection.mode,
+      enabled: projection.enabled,
+      replaceMode: projection.replaceMode,
+      quadPoints: projection.quadPoints?.length ?? 0
+    });
+
     if (activeProjectorCameraId === cameraId && activeMp4Projector) {
       activeMp4Projector.patch({
         gsplatEntity: currentGsplatEntity,
@@ -671,6 +682,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         opacity: projection.opacity,
         softEdge: projection.softEdge,
         flipY: projection.flipY,
+        replaceMode: projection.replaceMode,
         quadPoints: projection.quadPoints,
         quadPlaneTolerance: projection.quadPlaneTolerance,
         enabledProjection: projection.enabled
@@ -2467,6 +2479,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       opacity: readNumberValue(options.opacity, cameraObject.metadata?.videoProjection?.opacity ?? 0.85),
       softEdge: readNumberValue(options.softEdge, cameraObject.metadata?.videoProjection?.softEdge ?? 0.05),
       flipY: options.flipY ?? cameraObject.metadata?.videoProjection?.flipY ?? false,
+      replaceMode: options.replaceMode ?? cameraObject.metadata?.videoProjection?.replaceMode ?? false,
       quadPoints: options.quadPoints ?? cameraObject.metadata?.videoProjection?.quadPoints ?? [],
       quadPlaneTolerance: readNumberValue(options.quadPlaneTolerance, cameraObject.metadata?.videoProjection?.quadPlaneTolerance ?? 0.25)
     });
@@ -2511,6 +2524,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     updateActiveProjectorFromProjection(cameraId, nextProjection);
     if (nextProjection?.mode === 'quad') {
       rebuildQuadProjectionHelpers(cameraId);
+    } else if (nextProjection?.mode === 'quadOverlay') {
+      rebuildQuadProjectionHelpers(cameraId);
     }
     updateStatusMessage('Projection updated');
     return nextProjection;
@@ -2526,8 +2541,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return disableCameraVideoProjection(cameraId);
   }
 
-  function setVideoProjectionMode(cameraId, mode) {
-    const nextMode = mode === 'quad' ? 'quad' : 'cameraFrustum';
+function setVideoProjectionMode(cameraId, mode) {
+    const nextMode = ['quad', 'quadOverlay'].includes(mode) ? mode : 'cameraFrustum';
     const cameraObject = sceneObjectManager.getObject(cameraId);
     if (!cameraObject || cameraObject.type !== 'cameraDevice') {
       updateStatusMessage('Camera device not found');
@@ -2552,7 +2567,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     selectionManager.select(cameraId);
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
-      mode: 'quad',
+      mode: cameraObject.metadata?.videoProjection?.mode === 'quadOverlay' ? 'quadOverlay' : 'quad',
       quadEditing: true,
       quadPoints: []
     });
@@ -2592,13 +2607,14 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     updateCameraVideoProjection(cameraId, {
       ...projection,
       enabled: true,
-      mode: 'quad',
+      mode: projection.mode === 'quadOverlay' ? 'quadOverlay' : 'quad',
       quadEditing: false,
       quadPoints: projection.quadPoints,
       quadPlaneTolerance: projection.quadPlaneTolerance,
       opacity: projection.opacity,
       softEdge: projection.softEdge,
-      flipY: projection.flipY
+      flipY: projection.flipY,
+      replaceMode: projection.replaceMode
     });
     updateStatusMessage('四点区域投影已应用');
     return true;
@@ -2894,12 +2910,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         } else if (nextEnabled) {
           ensureMp4ProjectorForCamera(selectedId, {
             ...target?.metadata?.videoProjection,
-            enabled: true,
-            videoUrl: target?.metadata?.videoProjection?.videoUrl || '/assets/test.mp4',
-            opacity: target?.metadata?.videoProjection?.opacity ?? 0.85,
-            softEdge: target?.metadata?.videoProjection?.softEdge ?? 0.05,
-            flipY: target?.metadata?.videoProjection?.flipY ?? false
-          });
+      enabled: true,
+      videoUrl: target?.metadata?.videoProjection?.videoUrl || '/assets/test.mp4',
+      opacity: target?.metadata?.videoProjection?.opacity ?? 0.85,
+      softEdge: target?.metadata?.videoProjection?.softEdge ?? 0.05,
+      flipY: target?.metadata?.videoProjection?.flipY ?? false,
+      replaceMode: target?.metadata?.videoProjection?.replaceMode ?? false
+    });
         }
         syncCameraProjectionMetadata(selectedId, { enabled: nextEnabled });
         updateStatusMessage(`${target?.displayName ?? selectedId} projection ${nextEnabled ? 'enabled' : 'disabled'}`);
@@ -2946,6 +2963,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           return;
         }
         updateActiveProjectorFromProjection(selectedId, nextProjection);
+        if (nextProjection?.mode === 'quad' || nextProjection?.mode === 'quadOverlay') {
+          rebuildQuadProjectionHelpers(selectedId);
+        }
         updateStatusMessage('Projection updated');
         return;
       }
