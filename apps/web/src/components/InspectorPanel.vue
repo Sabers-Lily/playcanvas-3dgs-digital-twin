@@ -64,6 +64,15 @@ const patrolForm = reactive({
   speed: 2,
   loop: false
 });
+const buildingEnvelopeForm = reactive({
+  height: 0,
+  color: '#00A3FF',
+  opacity: 0.25,
+  outlineVisible: true,
+  fillVisible: true,
+  topVisible: false,
+  sideVisible: false
+});
 
 const TRANSFORM_EDITABLE_TYPES = new Set([
   'gsplat',
@@ -84,6 +93,7 @@ const isBimProxy = computed(() => props.selection?.type === 'bim-proxy');
 const isGsplat = computed(() => props.selection?.type === 'gsplat');
 const isCameraDevice = computed(() => props.selection?.type === 'cameraDevice');
 const isRobotDog = computed(() => props.selection?.type === 'robotDog');
+const isBuildingEnvelope = computed(() => props.selection?.type === 'buildingEnvelope');
 const isTransformEditable = computed(() => TRANSFORM_EDITABLE_TYPES.has(props.selection?.type));
 const activeSelection = computed(() => (props.selectedAsset ? null : props.selection));
 const selectedAssetType = computed(() => String(props.selectedAsset?.type || '').toLowerCase());
@@ -122,6 +132,8 @@ const patrolCanStart = computed(() => (
   !['running', 'paused'].includes(robotDogPatrol.value.state)
 ));
 const patrolStateLabel = computed(() => robotDogPatrol.value.state ?? 'idle');
+const buildingEnvelope = computed(() => props.selection?.metadata?.envelope ?? null);
+const buildingEnvelopePointCount = computed(() => buildingEnvelope.value?.points?.length ?? 0);
 
 const selectedAssetHasReadyRuntime = computed(() => (
   (['sog', 'gsplat', 'glb', 'gltf'].includes(selectedAssetType.value) && Number(props.selectedAsset?.size ?? 0) > 0) ||
@@ -216,6 +228,17 @@ function resetPatrolForm() {
   patrolForm.loop = robotDogPatrol.value.loop ?? false;
 }
 
+function resetBuildingEnvelopeForm() {
+  const envelope = props.selection?.metadata?.envelope ?? null;
+  buildingEnvelopeForm.height = envelope?.height ?? 0;
+  buildingEnvelopeForm.color = envelope?.color ?? '#00A3FF';
+  buildingEnvelopeForm.opacity = envelope?.opacity ?? 0.25;
+  buildingEnvelopeForm.outlineVisible = envelope?.outlineVisible ?? true;
+  buildingEnvelopeForm.fillVisible = envelope?.fillVisible ?? true;
+  buildingEnvelopeForm.topVisible = envelope?.topVisible ?? false;
+  buildingEnvelopeForm.sideVisible = envelope?.sideVisible ?? false;
+}
+
 watch(
   () => props.selection?.id,
   () => {
@@ -269,6 +292,14 @@ watch(
   { immediate: true, deep: true }
 );
 
+watch(
+  () => props.selection?.metadata?.envelope,
+  () => {
+    resetBuildingEnvelopeForm();
+  },
+  { immediate: true, deep: true }
+);
+
 function emitSteps() {
   emit('action', 'set-steps', {
     move: stepForm.move,
@@ -317,6 +348,42 @@ function emitRobotDogLoop() {
   emit('action', 'robot-dog-set-loop', {
     robotDogId: props.selection?.id,
     loop: patrolForm.loop
+  });
+}
+
+function emitBuildingEnvelopeHeight() {
+  if (Number(buildingEnvelopeForm.height) > 0) {
+    buildingEnvelopeForm.topVisible = true;
+    buildingEnvelopeForm.sideVisible = true;
+  } else {
+    buildingEnvelopeForm.topVisible = false;
+    buildingEnvelopeForm.sideVisible = false;
+  }
+
+  emit('action', 'set-building-envelope-height', {
+    objectId: props.selection?.id,
+    height: buildingEnvelopeForm.height
+  });
+}
+
+function emitBuildingEnvelopeColor() {
+  emit('action', 'set-building-envelope-color', {
+    objectId: props.selection?.id,
+    color: buildingEnvelopeForm.color
+  });
+}
+
+function emitBuildingEnvelopeOpacity() {
+  emit('action', 'set-building-envelope-opacity', {
+    objectId: props.selection?.id,
+    opacity: buildingEnvelopeForm.opacity
+  });
+}
+
+function emitBuildingEnvelopeToggle(action, value) {
+  emit('action', action, {
+    objectId: props.selection?.id,
+    visible: value
   });
 }
 </script>
@@ -604,6 +671,73 @@ function emitRobotDogLoop() {
           </div>
         </div>
 
+        <div v-else-if="isBuildingEnvelope" class="inspector-block">
+          <div class="section-title">建筑多边体</div>
+          <div class="inspector-meta-grid">
+            <div class="inspector-meta">
+              <span>顶点数量</span>
+              <strong>{{ buildingEnvelopePointCount }}</strong>
+            </div>
+            <div class="inspector-meta">
+              <span>高度</span>
+              <strong>{{ buildingEnvelopeForm.height }}</strong>
+            </div>
+            <div class="inspector-meta">
+              <span>底面填充</span>
+              <strong>{{ String(buildingEnvelopeForm.fillVisible) }}</strong>
+            </div>
+            <div class="inspector-meta">
+              <span>显示边框</span>
+              <strong>{{ String(buildingEnvelopeForm.outlineVisible) }}</strong>
+            </div>
+          </div>
+
+          <div class="inspector-subsection">
+            <div class="section-subtitle">参数</div>
+            <div class="inspector-grid">
+              <label class="inspector-field">
+                <span>高度</span>
+                <input v-model.number="buildingEnvelopeForm.height" type="number" min="0" step="0.1" @change="emitBuildingEnvelopeHeight" />
+              </label>
+              <label class="inspector-field">
+                <span>颜色</span>
+                <input v-model="buildingEnvelopeForm.color" type="color" @change="emitBuildingEnvelopeColor" />
+              </label>
+              <label class="inspector-field">
+                <span>透明度</span>
+                <input v-model.number="buildingEnvelopeForm.opacity" type="number" min="0" max="1" step="0.05" @change="emitBuildingEnvelopeOpacity" />
+              </label>
+              <label class="inspector-field">
+                <span>显示边框</span>
+                <input v-model="buildingEnvelopeForm.outlineVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-outline-visible', buildingEnvelopeForm.outlineVisible)" />
+              </label>
+              <label class="inspector-field">
+                <span>显示底面</span>
+                <input v-model="buildingEnvelopeForm.fillVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-fill-visible', buildingEnvelopeForm.fillVisible)" />
+              </label>
+              <label class="inspector-field">
+                <span>显示顶面</span>
+                <input v-model="buildingEnvelopeForm.topVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-top-visible', buildingEnvelopeForm.topVisible)" />
+              </label>
+              <label class="inspector-field">
+                <span>显示侧面</span>
+                <input v-model="buildingEnvelopeForm.sideVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-side-visible', buildingEnvelopeForm.sideVisible)" />
+              </label>
+            </div>
+            <div class="inspector-note">
+              高度为 0 时只显示 footprint。创建后可在这里手动设置高度。
+            </div>
+          </div>
+
+          <div class="inspector-subsection">
+            <div class="section-subtitle">操作</div>
+            <div class="inspector-actions">
+              <button type="button" @click="emit('action', 'focus-selected')">Focus</button>
+              <button type="button" @click="emit('action', 'delete-building-envelope', { objectId: activeSelection.id })">Delete</button>
+            </div>
+          </div>
+        </div>
+
         <div v-else-if="isCameraDevice" class="inspector-block">
           <div class="section-title">VIDEO PROJECTION</div>
           <div class="inspector-meta-grid">
@@ -718,6 +852,19 @@ function emitRobotDogLoop() {
         <div v-else class="inspector-block">
           <div class="inspector-actions">
             <button v-if="!activeSelection.protected" type="button" @click="emit('action', 'delete-selected')">Delete</button>
+          </div>
+        </div>
+
+        <div class="inspector-block">
+          <div class="section-title">建筑多边体绘制</div>
+          <div class="inspector-note">
+            正在绘制建筑多边体时，点击中间视口添加点位，闭合后将创建高度为 0 的对象，随后可在右侧属性中设置高度。
+          </div>
+          <div class="inspector-actions">
+            <button type="button" @click="emit('action', 'start-building-envelope-drawing')">创建建筑多边体</button>
+            <button type="button" @click="emit('action', 'finish-building-envelope-drawing')">闭合并创建</button>
+            <button type="button" @click="emit('action', 'undo-building-envelope-point')">撤销上一点</button>
+            <button type="button" @click="emit('action', 'cancel-building-envelope-drawing')">取消</button>
           </div>
         </div>
       </template>

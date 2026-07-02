@@ -39,6 +39,7 @@ export class PickingController {
     this.pointerDown = null;
     this.clickThresholdSq = 16;
     this.lastPickWorldPosition = null;
+    this.lastPickSource = null;
 
     this.app.mouse?.on(pc.EVENT_MOUSEDOWN, this._onMouseDown, this);
     this.app.mouse?.on(pc.EVENT_MOUSEUP, this._onMouseUp, this);
@@ -197,6 +198,7 @@ export class PickingController {
     const gsplatHit = await this.gsplatPointPicker?.pick?.(screenX, screenY);
     if (gsplatHit?.worldPoint) {
       this.lastPickWorldPosition = gsplatHit.worldPoint.clone?.() ?? gsplatHit.worldPoint;
+      this.lastPickSource = 'gsplat';
       this.markerManager.placeMarker(gsplatHit.worldPoint);
       this.onGsplatPick?.(gsplatHit);
       this.onPick?.({
@@ -220,6 +222,7 @@ export class PickingController {
     }
 
     this.lastPickWorldPosition = fallbackHit.point.clone?.() ?? fallbackHit.point;
+    this.lastPickSource = 'fallback';
     this.markerManager.placeMarker(fallbackHit.point);
     this.onFallbackPick?.(fallbackHit);
     this.onPick?.(fallbackHit);
@@ -231,6 +234,7 @@ export class PickingController {
 
   clearMarker() {
     this.lastPickWorldPosition = null;
+    this.lastPickSource = null;
     this.markerManager.clearMarker();
     if (this.onClear) {
       this.onClear();
@@ -239,5 +243,9 @@ export class PickingController {
 
   getLastPickWorldPosition() {
     return this.lastPickWorldPosition?.clone?.() ?? this.lastPickWorldPosition ?? null;
+  }
+
+  getLastPickSource() {
+    return this.lastPickSource ?? null;
   }
 }

@@ -3,6 +3,7 @@ import { ASSET_LABELS, ASSET_PATHS } from '../config/assets.js';
 import { BimAlignmentManager, DEFAULT_BIM_ALIGNMENT } from '../engine/BimAlignmentManager.js';
 import { BimProxyManager } from '../engine/BimProxyManager.js';
 import { CameraController } from '../engine/CameraController.js';
+import { BuildingEnvelopeController } from '../engine/BuildingEnvelopeController.js';
 import { GsplatMp4ProjectorAdapter } from '../engine/GsplatMp4ProjectorAdapter.js';
 import { GsplatPointPicker } from '../engine/GsplatPointPicker.js';
 import { MarkerManager } from '../engine/MarkerManager.js';
@@ -20,6 +21,11 @@ const OBJECT_IDS = {
   marker: 'pick-marker'
 };
 
+const BUILDING_ENVELOPE_TYPE = 'buildingEnvelope';
+const ACTIVE_EDIT_MODE = {
+  QUAD_VIDEO_PROJECTION: 'quadVideoProjection',
+  BUILDING_ENVELOPE_DRAWING: 'buildingEnvelopeDrawing'
+};
 const TRANSFORM_EDITABLE_TYPES = new Set([
   'gsplat',
   'bim-proxy',
@@ -29,6 +35,7 @@ const TRANSFORM_EDITABLE_TYPES = new Set([
   'robot',
   'robotDog',
   'cameraDevice',
+  BUILDING_ENVELOPE_TYPE,
   'device',
   'hotspot',
   'annotation',
@@ -99,6 +106,12 @@ const BUSINESS_OBJECT_DEFINITIONS = {
     displayName: '路线点',
     typeLabel: '路线点',
     businessType: 'routePoint'
+  },
+  buildingEnvelope: {
+    idPrefix: 'building_envelope',
+    displayName: '建筑多边体',
+    typeLabel: '建筑多边体',
+    businessType: 'buildingEnvelope'
   }
 };
 
@@ -261,6 +274,59 @@ function cloneQuadPoints(points) {
   }));
 }
 
+function cloneEnvelopePoints(points) {
+  if (!Array.isArray(points)) {
+    return [];
+  }
+
+  return points.map((point, index) => ({
+    id: point?.id ?? `p${index}`,
+    index: point?.index ?? index,
+    position: Array.isArray(point)
+      ? [...point]
+      : (Array.isArray(point?.position) ? [...point.position] : [0, 0, 0])
+  }));
+}
+
+function getEnvelopeWorldCenter(envelope) {
+  const points = cloneEnvelopePoints(envelope?.points);
+  if (!points.length) {
+    return null;
+  }
+
+  const center = new pc.Vec3();
+  points.forEach((point) => {
+    center.x += point.position[0];
+    center.y += point.position[1];
+    center.z += point.position[2];
+  });
+  center.mulScalar(1 / points.length);
+  return center;
+}
+
+function formatEnvelopePointList(points) {
+  return cloneEnvelopePoints(points)
+    .map((point) => `${point.index}:${point.position.map((value) => Number(value).toFixed(2)).join(',')}`)
+    .join(' | ');
+}
+
+function createDefaultEnvelopeMetadata(partial = {}) {
+  const height = Math.max(0, readNumberValue(partial.height, 0));
+  return {
+    points: cloneEnvelopePoints(partial.points),
+    closed: partial.closed ?? true,
+    height,
+    baseOffset: readNumberValue(partial.baseOffset, 0),
+    color: typeof partial.color === 'string' ? partial.color : '#00A3FF',
+    opacity: Math.max(0, Math.min(1, readNumberValue(partial.opacity, 0.25))),
+    outlineVisible: partial.outlineVisible ?? true,
+    fillVisible: partial.fillVisible ?? true,
+    topVisible: height > 0 ? (partial.topVisible ?? true) : false,
+    sideVisible: height > 0 ? (partial.sideVisible ?? true) : false,
+    upAxis: partial.upAxis ?? 'z'
+  };
+}
+
 function createDefaultVideoProjectionMetadata(id, partial = {}) {
   return {
     id,
@@ -279,6 +345,27 @@ function createDefaultVideoProjectionMetadata(id, partial = {}) {
     quadPoints: cloneQuadPoints(partial.quadPoints),
     quadPlaneTolerance: readNumberValue(partial.quadPlaneTolerance, 0.25)
   };
+}
+
+function createBuildingEnvelopeDebugProbeEntity(name = '__building_envelope_debug_probe') {
+  const entity = new pc.Entity(name);
+  const material = new pc.StandardMaterial();
+  material.diffuse = new pc.Color(1, 0.2, 0.2);
+  material.emissive = new pc.Color(1, 0.12, 0.12);
+  material.useLighting = false;
+  material.cull = pc.CULLFACE_NONE;
+  material.depthTest = false;
+  material.opacity = 1;
+  material.blendType = pc.BLEND_NONE;
+  material.update();
+  entity.addComponent('render', {
+    type: 'sphere',
+    castShadows: false,
+    receiveShadows: false,
+    material
+  });
+  entity.setLocalScale(0.8, 0.8, 0.8);
+  return entity;
 }
 
 export function createMiniEditorRuntime({ canvas, viewportElement }) {
@@ -317,12 +404,19 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   const bimAlignmentManager = new BimAlignmentManager();
   const bimProxyManager = new BimProxyManager({ app });
   const markerManager = new MarkerManager({ app });
+  const buildingEnvelopeDebugProbes = new Map();
   const robotDogPatrolController = new RobotDogPatrolController({
     app,
     sceneObjectManager,
     selectionManager,
     onLog(message) {
       console.log(message);
+      updateStatusMessage(message);
+    }
+  });
+  const buildingEnvelopeController = new BuildingEnvelopeController({
+    app,
+    onLog(message) {
       updateStatusMessage(message);
     }
   });
@@ -435,6 +529,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   let placementMode = null;
   let activeProjectorCameraId = null;
   let activeMp4Projector = null;
+  let activeEditMode = null;
+  let buildingEnvelopeCounter = 0;
   const quadProjectionHelpers = new Map();
   const quadHelperMaterial = new pc.StandardMaterial();
   quadHelperMaterial.diffuse = new pc.Color(0.1, 0.85, 1);
@@ -735,6 +831,20 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     window.addQuadVideoProjectionPoint = addQuadVideoProjectionPoint;
     window.clearQuadVideoProjectionPoints = clearQuadVideoProjectionPoints;
     window.applyQuadVideoProjection = applyQuadVideoProjection;
+    window.startBuildingEnvelopeDrawing = startBuildingEnvelopeDrawing;
+    window.stopBuildingEnvelopeDrawing = stopBuildingEnvelopeDrawing;
+    window.cancelBuildingEnvelopeDrawing = cancelBuildingEnvelopeDrawing;
+    window.addBuildingEnvelopePoint = addBuildingEnvelopePoint;
+    window.undoBuildingEnvelopePoint = undoBuildingEnvelopePoint;
+    window.clearBuildingEnvelopeDraft = clearBuildingEnvelopeDraft;
+    window.finishBuildingEnvelopeDrawing = finishBuildingEnvelopeDrawing;
+    window.createBuildingEnvelopeFromPoints = createBuildingEnvelopeFromPoints;
+    window.updateBuildingEnvelope = updateBuildingEnvelope;
+    window.setBuildingEnvelopeHeight = setBuildingEnvelopeHeight;
+    window.setBuildingEnvelopeColor = setBuildingEnvelopeColor;
+    window.setBuildingEnvelopeOpacity = setBuildingEnvelopeOpacity;
+    window.setBuildingEnvelopeOutlineVisible = setBuildingEnvelopeOutlineVisible;
+    window.deleteBuildingEnvelope = deleteBuildingEnvelope;
   }
 
   function formatCameraState() {
@@ -1206,6 +1316,187 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return { id, type, entity };
   }
 
+  function getNextBuildingEnvelopeName() {
+    buildingEnvelopeCounter += 1;
+    return `建筑多边体 ${String(buildingEnvelopeCounter).padStart(3, '0')}`;
+  }
+
+  function getBuildingEnvelopeObject(objectId) {
+    const sceneObject = sceneObjectManager.getObject(objectId);
+    if (!sceneObject || sceneObject.type !== BUILDING_ENVELOPE_TYPE) {
+      return null;
+    }
+
+    return sceneObject;
+  }
+
+  function createBuildingEnvelopeFromPoints(points, options = {}) {
+    const envelope = createDefaultEnvelopeMetadata({
+      ...options,
+      points,
+      height: 0,
+      topVisible: false,
+      sideVisible: false
+    });
+
+    if (envelope.points.length < 3) {
+      console.warn('[BuildingEnvelope] create failed: needs at least 3 points');
+      updateStatusMessage('[BuildingEnvelope] create failed: needs at least 3 points');
+      return null;
+    }
+
+    const displayName = options.displayName || getNextBuildingEnvelopeName();
+    const entity = buildingEnvelopeController.createEnvelopeEntity(displayName, envelope);
+    if (!entity) {
+      console.error('[BuildingEnvelope] create failed: entity build returned null');
+      updateStatusMessage('[BuildingEnvelope] create failed: entity build returned null');
+      return null;
+    }
+
+    app.root.addChild(entity);
+    const id = options.id || createBusinessObjectId(BUILDING_ENVELOPE_TYPE, 'building_envelope');
+    sceneObjectManager.addObject({
+      id,
+      name: displayName,
+      displayName,
+      type: BUILDING_ENVELOPE_TYPE,
+      typeLabel: BUSINESS_OBJECT_DEFINITIONS[BUILDING_ENVELOPE_TYPE].typeLabel,
+      entity,
+      transform: getTransformFromEntity(entity),
+      visible: options.visible ?? true,
+      status: options.status ?? 'ready',
+      metadata: {
+        ...(options.metadata ?? {}),
+        businessType: BUSINESS_OBJECT_DEFINITIONS[BUILDING_ENVELOPE_TYPE].businessType,
+        source: options.metadata?.source ?? 'editor-created',
+        placedBy: options.metadata?.placedBy ?? 'building-envelope-drawing',
+        envelope
+      }
+    });
+    const envelopeCenter = getEnvelopeWorldCenter(envelope);
+    if (envelopeCenter) {
+      const existingProbe = buildingEnvelopeDebugProbes.get(id);
+      existingProbe?.destroy();
+      const debugProbe = createBuildingEnvelopeDebugProbeEntity(`__building_envelope_debug_probe_${id}`);
+      debugProbe.setPosition(envelopeCenter);
+      app.root.addChild(debugProbe);
+      buildingEnvelopeDebugProbes.set(id, debugProbe);
+      console.log('[BuildingEnvelope] debug probe created', {
+        objectId: id,
+        position: [envelopeCenter.x, envelopeCenter.y, envelopeCenter.z],
+        enabled: debugProbe.enabled
+      });
+    }
+    console.log('[BuildingEnvelope] create payload', {
+      objectId: id,
+      center: envelopeCenter ? [envelopeCenter.x, envelopeCenter.y, envelopeCenter.z] : null,
+      height: envelope.height,
+      upAxis: envelope.upAxis,
+      points: cloneEnvelopePoints(envelope.points),
+      entityEnabled: entity.enabled,
+      childCount: entity.children.length
+    });
+    selectionManager.select(id);
+    console.log(`[BuildingEnvelope] created: objectId=${id} height=0`);
+    updateStatusMessage(`[BuildingEnvelope] created: objectId=${id} height=0`);
+    return { id, entity };
+  }
+
+  function updateBuildingEnvelope(objectId, patch = {}) {
+    const sceneObject = getBuildingEnvelopeObject(objectId);
+    if (!sceneObject?.entity) {
+      console.warn('[BuildingEnvelope] update failed: object not found', { objectId });
+      return false;
+    }
+
+    const currentEnvelope = createDefaultEnvelopeMetadata(sceneObject.metadata?.envelope ?? {});
+    const nextEnvelope = createDefaultEnvelopeMetadata({
+      ...currentEnvelope,
+      ...patch,
+      points: patch.points ?? currentEnvelope.points
+    });
+
+    // Preserve the serialized source of truth and rebuild the render entity from it.
+    buildingEnvelopeController.rebuildEnvelopeEntity(sceneObject.entity, nextEnvelope);
+    sceneObjectManager.updateObject(objectId, {
+      transform: getTransformFromEntity(sceneObject.entity),
+      metadata: {
+        ...sceneObject.metadata,
+        envelope: nextEnvelope
+      }
+    });
+    const envelopeCenter = getEnvelopeWorldCenter(nextEnvelope);
+    const debugProbe = buildingEnvelopeDebugProbes.get(objectId);
+    if (envelopeCenter && debugProbe && !debugProbe.destroyed) {
+      debugProbe.setPosition(envelopeCenter);
+    }
+    console.log(`[BuildingEnvelope] updated: objectId=${objectId}`);
+    updateStatusMessage(`[BuildingEnvelope] updated: objectId=${objectId}`);
+    return true;
+  }
+
+  function setBuildingEnvelopeHeight(objectId, height) {
+    const nextHeight = Math.max(0, readNumberValue(height, 0));
+    const sceneObject = getBuildingEnvelopeObject(objectId);
+    if (!sceneObject) {
+      console.warn('[BuildingEnvelope] height changed failed: object not found', { objectId });
+      return false;
+    }
+
+    const currentEnvelope = createDefaultEnvelopeMetadata(sceneObject.metadata?.envelope ?? {});
+    const shouldPromoteVolumeFaces = currentEnvelope.height <= 0 && nextHeight > 0;
+    const changed = updateBuildingEnvelope(objectId, {
+      ...currentEnvelope,
+      height: nextHeight,
+      // Envelopes are created at height 0 with top/side hidden, so the first height increase
+      // should reveal the actual volume instead of keeping an invisible ground-only footprint.
+      topVisible: nextHeight <= 0 ? false : (shouldPromoteVolumeFaces ? true : currentEnvelope.topVisible !== false),
+      sideVisible: nextHeight <= 0 ? false : (shouldPromoteVolumeFaces ? true : currentEnvelope.sideVisible !== false)
+    });
+    if (!changed) {
+      return false;
+    }
+
+    const nextObject = getBuildingEnvelopeObject(objectId);
+    const envelopeCenter = getEnvelopeWorldCenter(nextObject?.metadata?.envelope);
+    console.log('[BuildingEnvelope] height changed', {
+      objectId,
+      height: nextHeight,
+      center: envelopeCenter ? [envelopeCenter.x, envelopeCenter.y, envelopeCenter.z] : null
+    });
+    updateStatusMessage(`[BuildingEnvelope] height changed: objectId=${objectId} height=${nextHeight}`);
+    return true;
+  }
+
+  function setBuildingEnvelopeColor(objectId, color) {
+    return updateBuildingEnvelope(objectId, { color });
+  }
+
+  function setBuildingEnvelopeOpacity(objectId, opacity) {
+    const changed = updateBuildingEnvelope(objectId, { opacity });
+    if (changed) {
+      console.log(`[BuildingEnvelope] opacity changed: objectId=${objectId} opacity=${opacity}`);
+    }
+    return changed;
+  }
+
+  function setBuildingEnvelopeOutlineVisible(objectId, visible) {
+    return updateBuildingEnvelope(objectId, { outlineVisible: Boolean(visible) });
+  }
+
+  function deleteBuildingEnvelope(objectId) {
+    const sceneObject = getBuildingEnvelopeObject(objectId);
+    if (!sceneObject) {
+      return false;
+    }
+
+    const deleted = deleteSceneObject(objectId);
+    if (deleted) {
+      console.log(`[BuildingEnvelope] deleted: objectId=${objectId}`);
+    }
+    return deleted;
+  }
+
   function getSelectedRobotDogId() {
     const selectedId = selectionManager.getSelectedId();
     const object = selectedId ? sceneObjectManager.getObject(selectedId) : null;
@@ -1375,6 +1666,121 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     console.debug('[Placement] mode cancelled');
     updateStatusMessage('Placement cancelled');
     return true;
+  }
+
+  function getCurrentEditMode() {
+    if (getEditingQuadProjectionCameraId()) {
+      return ACTIVE_EDIT_MODE.QUAD_VIDEO_PROJECTION;
+    }
+
+    if (buildingEnvelopeController.isDrawing()) {
+      return ACTIVE_EDIT_MODE.BUILDING_ENVELOPE_DRAWING;
+    }
+
+    return activeEditMode;
+  }
+
+  function resolveEnvelopePickPosition(worldPosition = null) {
+    if (worldPosition) {
+      return worldPosition.clone?.() ?? worldPosition;
+    }
+
+    const lastPickSource = pickingController?.getLastPickSource?.();
+    if (lastPickSource && lastPickSource !== 'gsplat') {
+      return null;
+    }
+
+    const lastPickWorldPosition = pickingController?.getLastPickWorldPosition?.();
+    if (lastPickWorldPosition) {
+      return lastPickWorldPosition;
+    }
+
+    return null;
+  }
+
+  function startBuildingEnvelopeDrawing(options = {}) {
+    const currentEditMode = getCurrentEditMode();
+    if (currentEditMode && currentEditMode !== ACTIVE_EDIT_MODE.BUILDING_ENVELOPE_DRAWING) {
+      console.warn('[BuildingEnvelope] drawing failed: another edit mode is active');
+      updateStatusMessage('[BuildingEnvelope] drawing failed: another edit mode is active');
+      return false;
+    }
+
+    activeEditMode = ACTIVE_EDIT_MODE.BUILDING_ENVELOPE_DRAWING;
+    cancelPlacementMode();
+    buildingEnvelopeController.startDrawing(options);
+    updateDebugHandles();
+    return true;
+  }
+
+  function stopBuildingEnvelopeDrawing() {
+    const stopped = buildingEnvelopeController.stopDrawing();
+    if (stopped && activeEditMode === ACTIVE_EDIT_MODE.BUILDING_ENVELOPE_DRAWING) {
+      activeEditMode = null;
+    }
+    updateDebugHandles();
+    return stopped;
+  }
+
+  function cancelBuildingEnvelopeDrawing() {
+    const cancelled = buildingEnvelopeController.cancelDrawing();
+    if (cancelled && activeEditMode === ACTIVE_EDIT_MODE.BUILDING_ENVELOPE_DRAWING) {
+      activeEditMode = null;
+    }
+    updateDebugHandles();
+    return cancelled;
+  }
+
+  function clearBuildingEnvelopeDraft() {
+    buildingEnvelopeController.clearDraft();
+    return true;
+  }
+
+  function addBuildingEnvelopePoint(worldPosition = null) {
+    if (!buildingEnvelopeController.isDrawing()) {
+      return false;
+    }
+
+    const resolvedWorldPosition = resolveEnvelopePickPosition(worldPosition);
+    if (!resolvedWorldPosition) {
+      const lastPickSource = pickingController?.getLastPickSource?.() ?? 'unknown';
+      console.warn(`[BuildingEnvelope] add point failed: requires gsplat pick, last source=${lastPickSource}`);
+      updateStatusMessage(`[BuildingEnvelope] add point failed: requires gsplat pick, last source=${lastPickSource}`);
+      return false;
+    }
+
+    return buildingEnvelopeController.addPoint(resolvedWorldPosition);
+  }
+
+  function undoBuildingEnvelopePoint() {
+    return buildingEnvelopeController.undoLastPoint();
+  }
+
+  function finishBuildingEnvelopeDrawing(options = {}) {
+    const envelope = buildingEnvelopeController.finishDrawing();
+    if (!envelope) {
+      return null;
+    }
+
+    if (activeEditMode === ACTIVE_EDIT_MODE.BUILDING_ENVELOPE_DRAWING) {
+      activeEditMode = null;
+    }
+
+    return createBuildingEnvelopeFromPoints(envelope.points, {
+      ...options,
+      metadata: {
+        ...(options.metadata ?? {}),
+        envelope: {
+          ...envelope,
+          ...options.metadata?.envelope,
+          height: 0,
+          topVisible: false,
+          sideVisible: false
+        }
+      },
+      color: envelope.color,
+      opacity: envelope.opacity
+    });
   }
 
   function placeBusinessObjectAt(type, worldPoint) {
@@ -2098,6 +2504,27 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    if (object.type === BUILDING_ENVELOPE_TYPE) {
+      const envelopeCenter = getEnvelopeWorldCenter(object.metadata?.envelope);
+      if (envelopeCenter) {
+        console.log('[BuildingEnvelope] focus target', {
+          objectId,
+          center: [envelopeCenter.x, envelopeCenter.y, envelopeCenter.z],
+          entityPosition: object.entity?.getPosition ? [
+            object.entity.getPosition().x,
+            object.entity.getPosition().y,
+            object.entity.getPosition().z
+          ] : null
+        });
+        cameraController.focus(envelopeCenter, 18, {
+          yaw: 0,
+          pitch: 35
+        });
+        updateStatusMessage(`Focused: ${object.displayName ?? object.name}`);
+        return true;
+      }
+    }
+
     const aabb = getEntityWorldAabb(object.entity);
     if (aabb) {
       cameraController.focusAabb(aabb, {
@@ -2317,6 +2744,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     const nextObject = sceneObjectManager.getObject(objectId);
+    if (nextObject?.type === BUILDING_ENVELOPE_TYPE && nextObject.entity) {
+      nextObject.entity.enabled = nextObject.visible;
+    }
     if (nextObject?.type === 'robotDog') {
       robotDogPatrolController.setRouteVisible(objectId, nextObject.visible);
     }
@@ -2400,6 +2830,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     if (object.type === 'robotDog') {
       robotDogPatrolController.removeRobotDog(object.id);
     }
+
+    const debugProbe = buildingEnvelopeDebugProbes.get(objectId);
+    if (debugProbe && !debugProbe.destroyed) {
+      debugProbe.destroy();
+    }
+    buildingEnvelopeDebugProbes.delete(objectId);
 
     if (
       object.id !== OBJECT_IDS.bim &&
@@ -2640,6 +3076,10 @@ function setVideoProjectionMode(cameraId, mode) {
   }
 
   function addSceneObjectByType(type) {
+    if (type === BUILDING_ENVELOPE_TYPE) {
+      return startBuildingEnvelopeDrawing();
+    }
+
     if (type === 'empty') {
       return createBusinessSceneObject(type);
     }
@@ -2782,6 +3222,10 @@ function setVideoProjectionMode(cameraId, mode) {
         syncSteps(payload ?? {});
         return;
       case 'apply-alignment':
+        if (selectionManager.getSelectedId() && getBuildingEnvelopeObject(selectionManager.getSelectedId())) {
+          updateStatusMessage('建筑多边体暂不支持在此面板直接编辑 Transform');
+          return;
+        }
         setAlignmentFromUi(payload ?? {});
         return;
       case 'reset-alignment':
@@ -2857,6 +3301,45 @@ function setVideoProjectionMode(cameraId, mode) {
       }
       case 'create-robot-dog':
         createRobotDog(payload ?? {});
+        return;
+      case 'start-building-envelope-drawing':
+        startBuildingEnvelopeDrawing(payload ?? {});
+        return;
+      case 'stop-building-envelope-drawing':
+        stopBuildingEnvelopeDrawing();
+        return;
+      case 'cancel-building-envelope-drawing':
+        cancelBuildingEnvelopeDrawing();
+        return;
+      case 'undo-building-envelope-point':
+        undoBuildingEnvelopePoint();
+        return;
+      case 'finish-building-envelope-drawing':
+        finishBuildingEnvelopeDrawing(payload ?? {});
+        return;
+      case 'set-building-envelope-height':
+        setBuildingEnvelopeHeight(payload?.objectId ?? selectionManager.getSelectedId(), payload?.height);
+        return;
+      case 'set-building-envelope-color':
+        setBuildingEnvelopeColor(payload?.objectId ?? selectionManager.getSelectedId(), payload?.color);
+        return;
+      case 'set-building-envelope-opacity':
+        setBuildingEnvelopeOpacity(payload?.objectId ?? selectionManager.getSelectedId(), payload?.opacity);
+        return;
+      case 'set-building-envelope-outline-visible':
+        setBuildingEnvelopeOutlineVisible(payload?.objectId ?? selectionManager.getSelectedId(), payload?.visible);
+        return;
+      case 'set-building-envelope-fill-visible':
+        updateBuildingEnvelope(payload?.objectId ?? selectionManager.getSelectedId(), { fillVisible: payload?.visible });
+        return;
+      case 'set-building-envelope-top-visible':
+        updateBuildingEnvelope(payload?.objectId ?? selectionManager.getSelectedId(), { topVisible: payload?.visible });
+        return;
+      case 'set-building-envelope-side-visible':
+        updateBuildingEnvelope(payload?.objectId ?? selectionManager.getSelectedId(), { sideVisible: payload?.visible });
+        return;
+      case 'delete-building-envelope':
+        deleteBuildingEnvelope(payload?.objectId ?? selectionManager.getSelectedId());
         return;
       case 'robot-dog-start-edit':
         startRobotDogRouteEditing(payload?.robotDogId);
@@ -3001,13 +3484,25 @@ function setVideoProjectionMode(cameraId, mode) {
     bimProxyManager,
     markerManager,
     gsplatPointPicker,
-    shouldPrioritizeScenePick: () => Boolean(robotDogPatrolController.getEditingRobotDogId() || getEditingQuadProjectionCameraId()),
+    shouldPrioritizeScenePick: () => Boolean(
+      robotDogPatrolController.getEditingRobotDogId() ||
+      getEditingQuadProjectionCameraId() ||
+      buildingEnvelopeController.isDrawing()
+    ),
     pickBusinessObject,
     onBusinessObjectPick: (hit) => {
+      if (buildingEnvelopeController.isDrawing()) {
+        return;
+      }
       selectionManager.select(hit.objectId);
       updateStatusMessage(`Selected object: ${hit.object.displayName ?? hit.object.name}`);
     },
     onGsplatPick: (hit) => {
+      if (buildingEnvelopeController.isDrawing()) {
+        addBuildingEnvelopePoint(hit.worldPoint);
+        return;
+      }
+
       const editingQuadCameraId = getEditingQuadProjectionCameraId();
       if (editingQuadCameraId) {
         addQuadVideoProjectionPoint(editingQuadCameraId, hit.worldPoint);
@@ -3047,6 +3542,14 @@ function setVideoProjectionMode(cameraId, mode) {
       setPickStatus('picked', `GSplat point picked: ${formatPointLog(hit.worldPoint)}`);
     },
     onFallbackPick: (hit) => {
+      if (buildingEnvelopeController.isDrawing()) {
+        console.warn('[BuildingEnvelope] add point failed: fallback plane pick is not allowed', {
+          point: hit.point ? [hit.point.x, hit.point.y, hit.point.z] : null
+        });
+        updateStatusMessage('[BuildingEnvelope] add point failed: fallback plane pick is not allowed');
+        return;
+      }
+
       const editingQuadCameraId = getEditingQuadProjectionCameraId();
       if (editingQuadCameraId) {
         addQuadVideoProjectionPoint(editingQuadCameraId, hit.point);
@@ -3113,6 +3616,9 @@ function setVideoProjectionMode(cameraId, mode) {
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
+      if (cancelBuildingEnvelopeDrawing()) {
+        return;
+      }
       if (stopRobotDogRouteEditing()) {
         return;
       }
@@ -3135,6 +3641,10 @@ function setVideoProjectionMode(cameraId, mode) {
       active?.isContentEditable;
 
     if (isEditingText) {
+      return;
+    }
+
+    if (buildingEnvelopeController.isDrawing()) {
       return;
     }
 
@@ -3250,6 +3760,20 @@ function setVideoProjectionMode(cameraId, mode) {
     addQuadVideoProjectionPoint,
     clearQuadVideoProjectionPoints,
     applyQuadVideoProjection,
+    startBuildingEnvelopeDrawing,
+    stopBuildingEnvelopeDrawing,
+    cancelBuildingEnvelopeDrawing,
+    addBuildingEnvelopePoint,
+    undoBuildingEnvelopePoint,
+    clearBuildingEnvelopeDraft,
+    finishBuildingEnvelopeDrawing,
+    createBuildingEnvelopeFromPoints,
+    updateBuildingEnvelope,
+    setBuildingEnvelopeHeight,
+    setBuildingEnvelopeColor,
+    setBuildingEnvelopeOpacity,
+    setBuildingEnvelopeOutlineVisible,
+    deleteBuildingEnvelope,
     testVideoPreviewPlane(videoUrl = '/assets/test.mp4') {
       return enableCameraVideoProjection('camera_0', { videoUrl });
     },

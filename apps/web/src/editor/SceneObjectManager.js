@@ -8,12 +8,13 @@ const TYPE_ORDER = {
   robot: 7,
   robotDog: 8,
   cameraDevice: 9,
-  device: 10,
-  hotspot: 11,
-  annotation: 12,
-  routePoint: 13,
-  model: 14,
-  glb: 15
+  buildingEnvelope: 10,
+  device: 11,
+  hotspot: 12,
+  annotation: 13,
+  routePoint: 14,
+  model: 15,
+  glb: 16
 };
 
 const TYPE_LABELS = {
@@ -67,6 +68,29 @@ function clonePatrolMetadata(patrol) {
   };
 }
 
+function cloneEnvelopeMetadata(envelope) {
+  if (!envelope) {
+    return undefined;
+  }
+
+  return {
+    ...envelope,
+    points: Array.isArray(envelope.points)
+      ? envelope.points.map((point, index) => {
+          const position = Array.isArray(point)
+            ? point
+            : (Array.isArray(point?.position) ? point.position : [0, 0, 0]);
+
+          return {
+            ...(Array.isArray(point) ? {} : point),
+            index: point?.index ?? index,
+            position: [...position]
+          };
+        })
+      : []
+  };
+}
+
 function cloneMetadata(metadata) {
   if (!metadata) {
     return {};
@@ -77,7 +101,8 @@ function cloneMetadata(metadata) {
     videoProjection: metadata.videoProjection
       ? { ...metadata.videoProjection }
       : undefined,
-    patrol: clonePatrolMetadata(metadata.patrol)
+    patrol: clonePatrolMetadata(metadata.patrol),
+    envelope: cloneEnvelopeMetadata(metadata.envelope)
   };
 }
 
@@ -112,6 +137,7 @@ function toSceneObjectSnapshot(object) {
       runtimeType: object.metadata?.runtimeType,
       size: object.metadata?.size,
       businessType: object.metadata?.businessType,
+      envelope: cloneEnvelopeMetadata(object.metadata?.envelope),
       videoProjection: object.metadata?.videoProjection
         ? { ...object.metadata.videoProjection }
         : undefined,
