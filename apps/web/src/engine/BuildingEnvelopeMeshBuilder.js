@@ -1,10 +1,8 @@
 import * as pc from 'playcanvas';
 
-const FACE_THICKNESS = 0.12;
-const OUTLINE_THICKNESS = 0.1;
-const DEBUG_ZERO_HEIGHT_THICKNESS = 0.6;
-const DEBUG_CENTER_MARKER_SIZE = 0.6;
-const DEBUG_FORCE_OPAQUE = true;
+const FACE_THICKNESS = 0.08;
+const OUTLINE_THICKNESS = 0.08;
+const ZERO_HEIGHT_FOOTPRINT_THICKNESS = 0.12;
 
 function getPointPosition(point) {
   if (Array.isArray(point)) {
@@ -44,16 +42,21 @@ function colorFromHex(hex) {
   return new pc.Color().fromString(normalizeHexColor(hex));
 }
 
-function createStandardMaterial({ color, opacity, emissiveScale = 0.08 }) {
+function createStandardMaterial({
+  color,
+  opacity,
+  emissiveScale = 0.08,
+  depthTest = true
+}) {
   const material = new pc.StandardMaterial();
   const resolvedColor = colorFromHex(color);
-  const resolvedOpacity = DEBUG_FORCE_OPAQUE ? 1 : clampOpacity(opacity);
+  const resolvedOpacity = clampOpacity(opacity);
   material.diffuse = resolvedColor.clone();
   material.emissive = resolvedColor.clone().mulScalar(emissiveScale);
   material.opacity = resolvedOpacity;
   material.blendType = resolvedOpacity < 1 ? pc.BLEND_NORMAL : pc.BLEND_NONE;
-  material.depthWrite = true;
-  material.depthTest = false;
+  material.depthWrite = resolvedOpacity >= 1;
+  material.depthTest = depthTest;
   material.cull = pc.CULLFACE_NONE;
   material.useLighting = false;
   material.update();
@@ -78,11 +81,14 @@ function averageWorldPoints(points) {
 }
 
 function localizePoints(points, center) {
-  return points.map((point) => new pc.Vec3(
-    (Number.parseFloat(getPointPosition(point)[0]) || 0) - center.x,
-    (Number.parseFloat(getPointPosition(point)[1]) || 0) - center.y,
-    (Number.parseFloat(getPointPosition(point)[2]) || 0) - center.z
-  ));
+  return points.map((point) => {
+    const position = getPointPosition(point);
+    return new pc.Vec3(
+      (Number.parseFloat(position[0]) || 0) - center.x,
+      (Number.parseFloat(position[1]) || 0) - center.y,
+      (Number.parseFloat(position[2]) || 0) - center.z
+    );
+  });
 }
 
 function midpoint(a, b) {
@@ -129,26 +135,40 @@ function createSegmentEntity(name, start, end, thickness, material, upAxis = 'z'
   return entity;
 }
 
-function createVerticalDebugMarker(name, upAxisVector, visualHeight, material) {
-  const entity = createBoxEntity(name, material);
-  const offset = upAxisVector.clone().mulScalar(Math.max(visualHeight, DEBUG_CENTER_MARKER_SIZE) * 0.5);
-  entity.setLocalPosition(offset);
-
-  if (Math.abs(upAxisVector.z) > 0.5) {
-    entity.setLocalScale(DEBUG_CENTER_MARKER_SIZE, DEBUG_CENTER_MARKER_SIZE, Math.max(visualHeight, DEBUG_CENTER_MARKER_SIZE));
-  } else {
-    entity.setLocalScale(DEBUG_CENTER_MARKER_SIZE, Math.max(visualHeight, DEBUG_CENTER_MARKER_SIZE), DEBUG_CENTER_MARKER_SIZE);
-  }
-
-  return entity;
-}
-
 function destroyChildren(entity) {
   if (!entity) {
     return;
   }
 
   [...entity.children].forEach((child) => child.destroy());
+}
+
+function createFaceEntity(name, start, end, upAxisVector, height, material, upAxis = 'z') {
+  const edgeDirection = end.clone().sub(start);
+  const edgeLength = edgeDirection.length();
+  if (edgeLength <= 0.0001 || height <= 0.0001) {
+    return null;
+  }
+
+  const faceEntity = createBoxEntity(name, material);
+  const thickness = FACE_THICKNESS;
+  const faceCenter = midpoint(start, end).add(upAxisVector.clone().mulScalar(height * 0.5));
+  faceEntity.setLocalPosition(faceCenter);
+
+  if (upAxis === 'y') {
+    faceEntity.setLocalScale(thickness, height, Math.max(edgeLength, thickness));
+    faceEntity.setLocalRotation(new pc.Quat().setFromDirections(new pc.Vec3(0, 0, 1), edgeDirection.clone().normalize()));
+    return faceEntity;
+  }
+
+  faceEntity.setLocalScale(Math.max(edgeLength, thickness), thickness, height);
+  faceEntity.setLocalRotation(new pc.Quat().setFromDirections(new pc.Vec3(1, 0, 0), edgeDirection.clone().normalize()));
+  return faceEntity;
+}
+
+function createFootprintRibbonEntity(name, start, end, material, upAxis = 'z') {
+  const thickness = ZERO_HEIGHT_FOOTPRINT_THICKNESS;
+  return createSegmentEntity(name, start, end, thickness, material, upAxis);
 }
 
 export class BuildingEnvelopeMeshBuilder {
@@ -185,93 +205,105 @@ export class BuildingEnvelopeMeshBuilder {
 
     const parsedHeight = Number.parseFloat(envelope.height);
     const height = Number.isFinite(parsedHeight) ? Math.max(0, parsedHeight) : 0;
-    const visualHeight = height > 0 ? height : DEBUG_ZERO_HEIGHT_THICKNESS;
     const upAxis = envelope.upAxis ?? 'z';
     const upAxisVector = getUpAxisVector(upAxis);
     const color = normalizeHexColor(envelope.color);
     const opacity = clampOpacity(envelope.opacity);
-    const fillMaterial = createStandardMaterial({ color, opacity, emissiveScale: 0.2 });
-    const outlineMaterial = createStandardMaterial({ color: '#ff3b30', opacity: 1, emissiveScale: 0.5 });
-    const debugMaterial = createStandardMaterial({ color: '#ffcc00', opacity: 1, emissiveScale: 0.8 });
-
     const localBasePoints = localizePoints(points, center);
-    const localTopPoints = localBasePoints.map((point) => point.clone().add(upAxisVector.clone().mulScalar(visualHeight)));
+    const localTopPoints = localBasePoints.map((point) => point.clone().add(upAxisVector.clone().mulScalar(height)));
 
-    // Debug body: even when height is 0, keep a visible center marker so we can prove the entity exists.
-    const debugCenterMarker = createVerticalDebugMarker('__building_envelope_debug_center', upAxisVector, visualHeight, debugMaterial);
-    entity.addChild(debugCenterMarker);
+    const outlineMaterial = createStandardMaterial({
+      color: '#ff3b30',
+      opacity: 0.95,
+      emissiveScale: 0.4,
+      depthTest: true
+    });
 
-    // Debug footprint: fill the polygon bounding shape by spanning thick segments across each edge.
+    const fillMaterial = createStandardMaterial({
+      color,
+      opacity,
+      emissiveScale: 0.12,
+      depthTest: true
+    });
+
     for (let index = 0; index < localBasePoints.length; index += 1) {
       const nextIndex = (index + 1) % localBasePoints.length;
+      const baseStart = localBasePoints[index];
+      const baseEnd = localBasePoints[nextIndex];
+      const topStart = localTopPoints[index];
+      const topEnd = localTopPoints[nextIndex];
+
       const bottomLine = createSegmentEntity(
         `__building_envelope_outline_bottom_${index}`,
-        localBasePoints[index],
-        localBasePoints[nextIndex],
+        baseStart,
+        baseEnd,
         OUTLINE_THICKNESS,
         outlineMaterial,
         upAxis
       );
-
       if (bottomLine) {
         entity.addChild(bottomLine);
       }
 
-      const raisedBaseA = localBasePoints[index].clone();
-      const raisedBaseB = localBasePoints[nextIndex].clone();
-      const topLine = createSegmentEntity(
-        `__building_envelope_outline_top_${index}`,
-        localTopPoints[index],
-        localTopPoints[nextIndex],
-        OUTLINE_THICKNESS,
-        outlineMaterial,
-        upAxis
-      );
-
-      const verticalLine = createSegmentEntity(
-        `__building_envelope_outline_side_${index}`,
-        raisedBaseA,
-        localTopPoints[index],
-        OUTLINE_THICKNESS,
-        outlineMaterial,
-        upAxis
-      );
-
-      [topLine, verticalLine].forEach((lineEntity) => {
-        if (lineEntity) {
-          entity.addChild(lineEntity);
+      if (height <= 0.0001) {
+        if (envelope.fillVisible !== false) {
+          const footprintRibbon = createFootprintRibbonEntity(
+            `__building_envelope_footprint_${index}`,
+            baseStart,
+            baseEnd,
+            fillMaterial,
+            upAxis
+          );
+          if (footprintRibbon) {
+            entity.addChild(footprintRibbon);
+          }
         }
-      });
-    }
-
-    // Add a solid debug slab between the first two edges so we can verify an opaque model is present.
-    const edgeA = localBasePoints[0];
-    const edgeB = localBasePoints[1];
-    const edgeDirection = edgeB.clone().sub(edgeA);
-    const edgeLength = edgeDirection.length();
-    if (edgeLength > 0.0001) {
-      const slabEntity = createBoxEntity('__building_envelope_debug_slab', fillMaterial);
-      const slabCenter = midpoint(edgeA, edgeB).add(upAxisVector.clone().mulScalar(visualHeight * 0.5));
-      slabEntity.setLocalPosition(slabCenter);
-
-      if (upAxis === 'z') {
-        slabEntity.setLocalScale(Math.max(edgeLength, 0.5), 1.2, visualHeight);
-      } else {
-        slabEntity.setLocalScale(Math.max(edgeLength, 0.5), visualHeight, 1.2);
+        continue;
       }
 
-      entity.addChild(slabEntity);
-    }
+      if (envelope.topVisible !== false) {
+        const topLine = createSegmentEntity(
+          `__building_envelope_outline_top_${index}`,
+          topStart,
+          topEnd,
+          OUTLINE_THICKNESS,
+          outlineMaterial,
+          upAxis
+        );
+        if (topLine) {
+          entity.addChild(topLine);
+        }
+      }
 
-    console.log('[BuildingEnvelopeMeshBuilder] rebuilt entity', {
-      name: entity.name,
-      center: [center.x, center.y, center.z],
-      height,
-      visualHeight,
-      upAxis,
-      childCount: entity.children.length,
-      points
-    });
+      if (envelope.sideVisible !== false) {
+        const verticalLine = createSegmentEntity(
+          `__building_envelope_outline_side_${index}`,
+          baseStart,
+          topStart,
+          OUTLINE_THICKNESS,
+          outlineMaterial,
+          upAxis
+        );
+        if (verticalLine) {
+          entity.addChild(verticalLine);
+        }
+
+        if (envelope.fillVisible !== false) {
+          const sideFace = createFaceEntity(
+            `__building_envelope_face_side_${index}`,
+            baseStart,
+            baseEnd,
+            upAxisVector,
+            height,
+            fillMaterial,
+            upAxis
+          );
+          if (sideFace) {
+            entity.addChild(sideFace);
+          }
+        }
+      }
+    }
 
     return entity;
   }

@@ -347,27 +347,6 @@ function createDefaultVideoProjectionMetadata(id, partial = {}) {
   };
 }
 
-function createBuildingEnvelopeDebugProbeEntity(name = '__building_envelope_debug_probe') {
-  const entity = new pc.Entity(name);
-  const material = new pc.StandardMaterial();
-  material.diffuse = new pc.Color(1, 0.2, 0.2);
-  material.emissive = new pc.Color(1, 0.12, 0.12);
-  material.useLighting = false;
-  material.cull = pc.CULLFACE_NONE;
-  material.depthTest = false;
-  material.opacity = 1;
-  material.blendType = pc.BLEND_NONE;
-  material.update();
-  entity.addComponent('render', {
-    type: 'sphere',
-    castShadows: false,
-    receiveShadows: false,
-    material
-  });
-  entity.setLocalScale(0.8, 0.8, 0.8);
-  return entity;
-}
-
 export function createMiniEditorRuntime({ canvas, viewportElement }) {
   const app = new pc.Application(canvas, {
     mouse: new pc.Mouse(document.body),
@@ -404,7 +383,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   const bimAlignmentManager = new BimAlignmentManager();
   const bimProxyManager = new BimProxyManager({ app });
   const markerManager = new MarkerManager({ app });
-  const buildingEnvelopeDebugProbes = new Map();
   const robotDogPatrolController = new RobotDogPatrolController({
     app,
     sceneObjectManager,
@@ -1374,19 +1352,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       }
     });
     const envelopeCenter = getEnvelopeWorldCenter(envelope);
-    if (envelopeCenter) {
-      const existingProbe = buildingEnvelopeDebugProbes.get(id);
-      existingProbe?.destroy();
-      const debugProbe = createBuildingEnvelopeDebugProbeEntity(`__building_envelope_debug_probe_${id}`);
-      debugProbe.setPosition(envelopeCenter);
-      app.root.addChild(debugProbe);
-      buildingEnvelopeDebugProbes.set(id, debugProbe);
-      console.log('[BuildingEnvelope] debug probe created', {
-        objectId: id,
-        position: [envelopeCenter.x, envelopeCenter.y, envelopeCenter.z],
-        enabled: debugProbe.enabled
-      });
-    }
     console.log('[BuildingEnvelope] create payload', {
       objectId: id,
       center: envelopeCenter ? [envelopeCenter.x, envelopeCenter.y, envelopeCenter.z] : null,
@@ -1425,11 +1390,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         envelope: nextEnvelope
       }
     });
-    const envelopeCenter = getEnvelopeWorldCenter(nextEnvelope);
-    const debugProbe = buildingEnvelopeDebugProbes.get(objectId);
-    if (envelopeCenter && debugProbe && !debugProbe.destroyed) {
-      debugProbe.setPosition(envelopeCenter);
-    }
     console.log(`[BuildingEnvelope] updated: objectId=${objectId}`);
     updateStatusMessage(`[BuildingEnvelope] updated: objectId=${objectId}`);
     return true;
@@ -2830,12 +2790,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     if (object.type === 'robotDog') {
       robotDogPatrolController.removeRobotDog(object.id);
     }
-
-    const debugProbe = buildingEnvelopeDebugProbes.get(objectId);
-    if (debugProbe && !debugProbe.destroyed) {
-      debugProbe.destroy();
-    }
-    buildingEnvelopeDebugProbes.delete(objectId);
 
     if (
       object.id !== OBJECT_IDS.bim &&
