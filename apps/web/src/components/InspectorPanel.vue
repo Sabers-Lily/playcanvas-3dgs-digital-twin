@@ -78,15 +78,20 @@ const projectionToggleLabel = computed(() => (
 ));
 const videoProjectionForm = reactive({
   enabled: true,
+  mode: 'cameraFrustum',
   videoUrl: '',
   opacity: 1,
   softEdge: 0.05,
-  flipY: false
+  flipY: false,
+  quadPlaneTolerance: 0.25
 });
 const patrolForm = reactive({
   speed: 2,
   loop: false
 });
+const videoProjection = computed(() => props.selection?.metadata?.videoProjection ?? {});
+const quadPointCount = computed(() => videoProjection.value.quadPoints?.length ?? 0);
+const isQuadProjectionMode = computed(() => videoProjectionForm.mode === 'quad');
 
 const robotDogPatrol = computed(() => (
   props.selection?.metadata?.patrol ?? {
@@ -184,10 +189,12 @@ function resetTransformForm(transform) {
 function resetVideoProjectionForm() {
   const projection = props.selection?.metadata?.videoProjection ?? null;
   videoProjectionForm.enabled = projection?.enabled ?? true;
+  videoProjectionForm.mode = projection?.mode ?? 'cameraFrustum';
   videoProjectionForm.videoUrl = projection?.videoUrl ?? '';
   videoProjectionForm.opacity = projection?.opacity ?? 1;
   videoProjectionForm.softEdge = projection?.softEdge ?? 0.05;
   videoProjectionForm.flipY = projection?.flipY ?? false;
+  videoProjectionForm.quadPlaneTolerance = projection?.quadPlaneTolerance ?? 0.25;
 }
 
 function resetPatrolForm() {
@@ -275,10 +282,12 @@ function saveAlignment() {
 function emitVideoProjectionPatch() {
   emit('action', 'update-video-projection', {
     enabled: videoProjectionForm.enabled,
+    mode: videoProjectionForm.mode,
     videoUrl: videoProjectionForm.videoUrl,
     opacity: videoProjectionForm.opacity,
     softEdge: videoProjectionForm.softEdge,
-    flipY: videoProjectionForm.flipY
+    flipY: videoProjectionForm.flipY,
+    quadPlaneTolerance: videoProjectionForm.quadPlaneTolerance
   });
 }
 
@@ -607,19 +616,19 @@ function emitRobotDogLoop() {
         </div>
 
         <div v-if="isCameraDevice" class="inspector-block">
-          <div class="section-title">Video Projection</div>
+          <div class="section-title">VIDEO PROJECTION</div>
           <div class="inspector-meta-grid">
             <div class="inspector-meta">
               <span>Enabled</span>
               <strong>{{ String(videoProjectionForm.enabled) }}</strong>
             </div>
             <div class="inspector-meta">
-              <span>Calibration</span>
-              <strong>transform-driven</strong>
+              <span>模式</span>
+              <strong>{{ videoProjectionForm.mode === 'quad' ? '四点区域投影' : '摄像头视锥投影' }}</strong>
             </div>
             <div class="inspector-meta">
-              <span>Captured</span>
-              <strong>-</strong>
+              <span>已选点数</span>
+              <strong>{{ quadPointCount }} / 4</strong>
             </div>
             <div class="inspector-meta inspector-meta-wide">
               <span>Video</span>
@@ -630,6 +639,13 @@ function emitRobotDogLoop() {
           <div class="inspector-subsection">
             <div class="section-subtitle">Parameters</div>
             <div class="inspector-grid">
+              <label class="inspector-field">
+                <span>投影模式</span>
+                <select v-model="videoProjectionForm.mode" @change="emitVideoProjectionPatch">
+                  <option value="cameraFrustum">摄像头视锥投影</option>
+                  <option value="quad">四点区域投影</option>
+                </select>
+              </label>
               <label class="inspector-field">
                 <span>Opacity</span>
                 <input v-model.number="videoProjectionForm.opacity" type="number" min="0" max="1" step="0.05" @change="emitVideoProjectionPatch" />
@@ -643,8 +659,31 @@ function emitRobotDogLoop() {
                 <input v-model="videoProjectionForm.flipY" type="checkbox" @change="emitVideoProjectionPatch" />
               </label>
             </div>
-            <div class="inspector-note">
-              当前 demo 直接使用该摄像头对象的位姿作为 projector。
+          </div>
+
+          <div v-if="isQuadProjectionMode" class="inspector-subsection">
+            <div class="section-subtitle">四点区域投影</div>
+            <div class="inspector-meta-grid">
+              <div class="inspector-meta">
+                <span>已选点数</span>
+                <strong>{{ quadPointCount }} / 4</strong>
+              </div>
+              <div class="inspector-meta inspector-meta-wide">
+                <span>点位顺序</span>
+                <strong>1 左上, 2 右上, 3 右下, 4 左下</strong>
+              </div>
+            </div>
+            <div class="inspector-grid">
+              <label class="inspector-field">
+                <span>Plane Tolerance</span>
+                <input v-model.number="videoProjectionForm.quadPlaneTolerance" type="number" min="0.001" step="0.01" @change="emitVideoProjectionPatch" />
+              </label>
+            </div>
+            <div class="inspector-actions">
+              <button type="button" @click="emit('action', 'start-quad-video-projection-editing')">开始选择四点</button>
+              <button type="button" @click="emit('action', 'stop-quad-video-projection-editing')">停止选择</button>
+              <button type="button" @click="emit('action', 'clear-quad-video-projection-points')">清空四点</button>
+              <button type="button" :disabled="quadPointCount !== 4" @click="emit('action', 'apply-quad-video-projection')">应用四点投影</button>
             </div>
           </div>
 

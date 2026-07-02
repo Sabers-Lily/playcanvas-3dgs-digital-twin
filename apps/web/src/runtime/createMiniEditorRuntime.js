@@ -247,14 +247,35 @@ function clonePatrolMetadata(patrol) {
   };
 }
 
+function cloneQuadPoints(points) {
+  if (!Array.isArray(points)) {
+    return [];
+  }
+
+  return points.map((point, index) => ({
+    id: point.id ?? `quad-point-${String(index + 1).padStart(3, '0')}`,
+    index: point.index ?? index,
+    label: point.label ?? ['左上', '右上', '右下', '左下'][index] ?? `点 ${index + 1}`,
+    position: Array.isArray(point.position) ? [...point.position] : [0, 0, 0]
+  }));
+}
+
 function createDefaultVideoProjectionMetadata(id, partial = {}) {
   return {
     id,
-    enabled: partial.enabled ?? true,
-    videoUrl: partial.videoUrl ?? '',
-    opacity: readNumberValue(partial.opacity, 1),
+    enabled: partial.enabled ?? false,
+    mode: partial.mode ?? 'cameraFrustum',
+    videoUrl: partial.videoUrl ?? '/assets/test.mp4',
+    projectorFov: readNumberValue(partial.projectorFov, 45),
+    projectorAspect: readNumberValue(partial.projectorAspect, 1.777),
+    projectorNear: readNumberValue(partial.projectorNear, 0.1),
+    projectorFar: readNumberValue(partial.projectorFar, 1000),
+    opacity: readNumberValue(partial.opacity, 0.85),
     softEdge: readNumberValue(partial.softEdge, 0.05),
-    flipY: Boolean(partial.flipY)
+    flipY: Boolean(partial.flipY),
+    quadEditing: Boolean(partial.quadEditing),
+    quadPoints: cloneQuadPoints(partial.quadPoints),
+    quadPlaneTolerance: readNumberValue(partial.quadPlaneTolerance, 0.25)
   };
 }
 
@@ -406,6 +427,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   let placementMode = null;
   let activeProjectorCameraId = null;
   let activeMp4Projector = null;
+  const quadProjectionHelpers = new Map();
+  const quadHelperMaterial = new pc.StandardMaterial();
+  quadHelperMaterial.diffuse = new pc.Color(0.1, 0.85, 1);
+  quadHelperMaterial.emissive = new pc.Color(0.05, 0.35, 0.5);
+  quadHelperMaterial.update();
 
   function syncCameraProjectionMetadata(cameraId, patch = {}) {
     const target = sceneObjectManager.getObject(cameraId);
@@ -456,10 +482,17 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         gsplatEntity: currentGsplatEntity,
         mainCameraEntity: camera,
         projectorEntity: cameraObject.entity,
+        mode: projection.mode,
+        projectorFov: projection.projectorFov,
+        projectorAspect: projection.projectorAspect,
+        projectorNear: projection.projectorNear,
+        projectorFar: projection.projectorFar,
         videoUrl: projection.videoUrl,
         opacity: projection.opacity,
         softEdge: projection.softEdge,
         flipY: projection.flipY,
+        quadPoints: projection.quadPoints,
+        quadPlaneTolerance: projection.quadPlaneTolerance,
         enabledProjection: projection.enabled,
         logDebug: true
       });
@@ -470,10 +503,17 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         gsplatEntity: currentGsplatEntity,
         mainCameraEntity: camera,
         projectorEntity: cameraObject.entity,
+        mode: projection.mode,
+        projectorFov: projection.projectorFov,
+        projectorAspect: projection.projectorAspect,
+        projectorNear: projection.projectorNear,
+        projectorFar: projection.projectorFar,
         videoUrl: projection.videoUrl,
         opacity: projection.opacity,
         softEdge: projection.softEdge,
         flipY: projection.flipY,
+        quadPoints: projection.quadPoints,
+        quadPlaneTolerance: projection.quadPlaneTolerance,
         enabledProjection: projection.enabled
       });
     }
@@ -483,6 +523,161 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
 
     return activeMp4Projector;
+  }
+
+  function clearQuadProjectionHelpers(cameraId = null) {
+    const entries = cameraId
+      ? [[cameraId, quadProjectionHelpers.get(cameraId)]]
+      : Array.from(quadProjectionHelpers.entries());
+
+    entries.forEach(([id, helpers]) => {
+      helpers?.forEach((entity) => {
+        if (entity?.name?.startsWith('__quad_projection_') && !entity.destroyed) {
+          entity.destroy();
+        }
+      });
+      quadProjectionHelpers.delete(id);
+    });
+  }
+
+  function rebuildQuadProjectionHelpers(cameraId) {
+    clearQuadProjectionHelpers(cameraId);
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    const points = cameraObject?.metadata?.videoProjection?.quadPoints ?? [];
+    if (!points.length) {
+      return;
+    }
+
+    const helpers = [];
+    points.forEach((point) => {
+      const entity = new pc.Entity(`__quad_projection_point_${cameraId}_${point.index}`);
+      entity.addComponent('render', {
+        type: 'sphere',
+        castShadows: false,
+        receiveShadows: false,
+        material: quadHelperMaterial
+      });
+      entity.setLocalScale(0.22, 0.22, 0.22);
+      entity.setPosition(...point.position);
+      app.root.addChild(entity);
+      helpers.push(entity);
+    });
+
+    quadProjectionHelpers.set(cameraId, helpers);
+  }
+
+  function getEditingQuadProjectionCameraId() {
+    const selectedId = selectionManager.getSelectedId();
+    const selected = selectedId ? sceneObjectManager.getObject(selectedId) : null;
+    if (selected?.type === 'cameraDevice' && selected.metadata?.videoProjection?.quadEditing) {
+      return selectedId;
+    }
+
+    return sceneObjectManager
+      .getObjects()
+      .find((object) => object.type === 'cameraDevice' && object.metadata?.videoProjection?.quadEditing)
+      ?.id ?? null;
+  }
+
+  function addQuadVideoProjectionPoint(cameraId, worldPosition) {
+    if (!worldPosition) {
+      console.warn('[QuadVideoProjection] add point failed: no valid pick position');
+      updateStatusMessage('[QuadVideoProjection] add point failed: no valid pick position');
+      return false;
+    }
+
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      updateStatusMessage('Camera device not found');
+      return false;
+    }
+
+    const currentProjection = createDefaultVideoProjectionMetadata(cameraId, cameraObject.metadata?.videoProjection);
+    if (!currentProjection.quadEditing || currentProjection.quadPoints.length >= 4) {
+      return false;
+    }
+
+    const index = currentProjection.quadPoints.length;
+    const point = {
+      id: `quad-point-${String(index + 1).padStart(3, '0')}`,
+      index,
+      label: ['左上', '右上', '右下', '左下'][index],
+      position: [worldPosition.x, worldPosition.y, worldPosition.z]
+    };
+    const quadPoints = [...currentProjection.quadPoints, point];
+    const editingCompleted = quadPoints.length >= 4;
+
+    const nextProjection = syncCameraProjectionMetadata(cameraId, {
+      ...currentProjection,
+      mode: 'quad',
+      quadEditing: !editingCompleted,
+      quadPoints
+    });
+
+    if (activeProjectorCameraId === cameraId && activeMp4Projector && nextProjection) {
+      activeMp4Projector.patch({
+        mode: nextProjection.mode,
+        quadPoints: nextProjection.quadPoints,
+        quadPlaneTolerance: nextProjection.quadPlaneTolerance,
+        enabledProjection: nextProjection.enabled
+      });
+    }
+
+    rebuildQuadProjectionHelpers(cameraId);
+    console.log(`[QuadVideoProjection] point added: objectId=${cameraId} index=${index} position=${point.position.join(',')}`);
+    updateStatusMessage(`四点区域投影点位: ${quadPoints.length} / 4`);
+
+    if (editingCompleted) {
+      console.log(`[QuadVideoProjection] editing completed: objectId=${cameraId}`);
+      updateStatusMessage(`[QuadVideoProjection] editing completed: objectId=${cameraId}`);
+    }
+
+    return true;
+  }
+
+  function clearQuadVideoProjectionPoints(cameraId) {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      updateStatusMessage('Camera device not found');
+      return false;
+    }
+
+    syncCameraProjectionMetadata(cameraId, {
+      ...cameraObject.metadata?.videoProjection,
+      quadEditing: false,
+      quadPoints: []
+    });
+    clearQuadProjectionHelpers(cameraId);
+    updateStatusMessage('四点区域投影点位已清空');
+    return true;
+  }
+
+  function updateActiveProjectorFromProjection(cameraId, projection) {
+    const target = sceneObjectManager.getObject(cameraId);
+    if (!target || !projection) {
+      return;
+    }
+
+    if (activeProjectorCameraId === cameraId && activeMp4Projector) {
+      activeMp4Projector.patch({
+        gsplatEntity: currentGsplatEntity,
+        projectorEntity: target.entity,
+        mode: projection.mode,
+        projectorFov: projection.projectorFov,
+        projectorAspect: projection.projectorAspect,
+        projectorNear: projection.projectorNear,
+        projectorFar: projection.projectorFar,
+        videoUrl: projection.videoUrl,
+        opacity: projection.opacity,
+        softEdge: projection.softEdge,
+        flipY: projection.flipY,
+        quadPoints: projection.quadPoints,
+        quadPlaneTolerance: projection.quadPlaneTolerance,
+        enabledProjection: projection.enabled
+      });
+    } else if (projection.enabled && projection.videoUrl) {
+      ensureMp4ProjectorForCamera(cameraId, projection);
+    }
   }
 
   function getCurrentSplatState() {
@@ -511,6 +706,16 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     window.startRobotDogRouteEditing = startRobotDogRouteEditing;
     window.startRobotDogPatrol = startRobotDogPatrol;
     window.stopRobotDogPatrol = stopRobotDogPatrol;
+    window.enableCameraVideoProjection = enableCameraVideoProjection;
+    window.disableCameraVideoProjection = disableCameraVideoProjection;
+    window.updateCameraVideoProjection = updateCameraVideoProjection;
+    window.toggleCameraVideoProjection = toggleCameraVideoProjection;
+    window.setVideoProjectionMode = setVideoProjectionMode;
+    window.startQuadVideoProjectionEditing = startQuadVideoProjectionEditing;
+    window.stopQuadVideoProjectionEditing = stopQuadVideoProjectionEditing;
+    window.addQuadVideoProjectionPoint = addQuadVideoProjectionPoint;
+    window.clearQuadVideoProjectionPoints = clearQuadVideoProjectionPoints;
+    window.applyQuadVideoProjection = applyQuadVideoProjection;
   }
 
   function formatCameraState() {
@@ -1288,6 +1493,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
               sourceName: filename
             }
           });
+          if (activeMp4Projector && activeProjectorCameraId) {
+            activeMp4Projector.patch({ gsplatEntity: entity });
+          }
           updateDebugHandles();
 
           destroySplatState(previousState);
@@ -2250,12 +2458,17 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     const videoUrl = options.videoUrl || cameraObject.metadata?.videoProjection?.videoUrl || '/assets/test.mp4';
-    ensureMp4ProjectorForCamera(cameraId, {
+    const projection = ensureMp4ProjectorForCamera(cameraId, {
+      ...cameraObject.metadata?.videoProjection,
+      ...options,
       enabled: true,
       videoUrl,
-      opacity: readNumberValue(options.opacity, cameraObject.metadata?.videoProjection?.opacity ?? 1),
+      mode: options.mode ?? cameraObject.metadata?.videoProjection?.mode ?? 'cameraFrustum',
+      opacity: readNumberValue(options.opacity, cameraObject.metadata?.videoProjection?.opacity ?? 0.85),
       softEdge: readNumberValue(options.softEdge, cameraObject.metadata?.videoProjection?.softEdge ?? 0.05),
-      flipY: options.flipY ?? cameraObject.metadata?.videoProjection?.flipY ?? false
+      flipY: options.flipY ?? cameraObject.metadata?.videoProjection?.flipY ?? false,
+      quadPoints: options.quadPoints ?? cameraObject.metadata?.videoProjection?.quadPoints ?? [],
+      quadPlaneTolerance: readNumberValue(options.quadPlaneTolerance, cameraObject.metadata?.videoProjection?.quadPlaneTolerance ?? 0.25)
     });
 
     console.log('[Projection] enableCameraVideoProjection', {
@@ -2264,8 +2477,131 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
     updateStatusMessage(`Projection enabled: ${cameraId}`);
     return {
-      cameraId
+      cameraId,
+      projector: projection
     };
+  }
+
+  function disableCameraVideoProjection(cameraId = 'camera_0') {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      updateStatusMessage('Camera device not found');
+      return false;
+    }
+
+    if (activeProjectorCameraId === cameraId && activeMp4Projector) {
+      activeMp4Projector.patch({ enabledProjection: false });
+    }
+    syncCameraProjectionMetadata(cameraId, {
+      ...cameraObject.metadata?.videoProjection,
+      enabled: false
+    });
+    updateStatusMessage(`Projection disabled: ${cameraId}`);
+    return true;
+  }
+
+  function updateCameraVideoProjection(cameraId = 'camera_0', patch = {}) {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      updateStatusMessage('Camera device not found');
+      return null;
+    }
+
+    const nextProjection = syncCameraProjectionMetadata(cameraId, patch);
+    updateActiveProjectorFromProjection(cameraId, nextProjection);
+    if (nextProjection?.mode === 'quad') {
+      rebuildQuadProjectionHelpers(cameraId);
+    }
+    updateStatusMessage('Projection updated');
+    return nextProjection;
+  }
+
+  function toggleCameraVideoProjection(cameraId = 'camera_0') {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    const nextEnabled = !cameraObject?.metadata?.videoProjection?.enabled;
+    if (nextEnabled) {
+      return enableCameraVideoProjection(cameraId);
+    }
+
+    return disableCameraVideoProjection(cameraId);
+  }
+
+  function setVideoProjectionMode(cameraId, mode) {
+    const nextMode = mode === 'quad' ? 'quad' : 'cameraFrustum';
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      updateStatusMessage('Camera device not found');
+      return null;
+    }
+
+    const nextProjection = updateCameraVideoProjection(cameraId, {
+      ...cameraObject.metadata?.videoProjection,
+      mode: nextMode
+    });
+    updateStatusMessage(`投影模式: ${nextMode}`);
+    return nextProjection;
+  }
+
+  function startQuadVideoProjectionEditing(cameraId) {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      updateStatusMessage('请先选中摄像头对象');
+      return false;
+    }
+
+    selectionManager.select(cameraId);
+    syncCameraProjectionMetadata(cameraId, {
+      ...cameraObject.metadata?.videoProjection,
+      mode: 'quad',
+      quadEditing: true,
+      quadPoints: []
+    });
+    clearQuadProjectionHelpers(cameraId);
+    updateStatusMessage('开始选择四点区域投影');
+    return true;
+  }
+
+  function stopQuadVideoProjectionEditing(cameraId) {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      updateStatusMessage('Camera device not found');
+      return false;
+    }
+
+    syncCameraProjectionMetadata(cameraId, {
+      ...cameraObject.metadata?.videoProjection,
+      quadEditing: false
+    });
+    updateStatusMessage('停止选择四点区域投影');
+    return true;
+  }
+
+  function applyQuadVideoProjection(cameraId) {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    const projection = cameraObject?.metadata?.videoProjection;
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      updateStatusMessage('Camera device not found');
+      return false;
+    }
+
+    if ((projection?.quadPoints?.length ?? 0) !== 4) {
+      updateStatusMessage('四点区域投影需要 4 个点');
+      return false;
+    }
+
+    updateCameraVideoProjection(cameraId, {
+      ...projection,
+      enabled: true,
+      mode: 'quad',
+      quadEditing: false,
+      quadPoints: projection.quadPoints,
+      quadPlaneTolerance: projection.quadPlaneTolerance,
+      opacity: projection.opacity,
+      softEdge: projection.softEdge,
+      flipY: projection.flipY
+    });
+    updateStatusMessage('四点区域投影已应用');
+    return true;
   }
 
   function syncSteps(nextSteps) {
@@ -2557,9 +2893,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           activeMp4Projector.patch({ enabledProjection: nextEnabled });
         } else if (nextEnabled) {
           ensureMp4ProjectorForCamera(selectedId, {
+            ...target?.metadata?.videoProjection,
             enabled: true,
             videoUrl: target?.metadata?.videoProjection?.videoUrl || '/assets/test.mp4',
-            opacity: target?.metadata?.videoProjection?.opacity ?? 1,
+            opacity: target?.metadata?.videoProjection?.opacity ?? 0.85,
             softEdge: target?.metadata?.videoProjection?.softEdge ?? 0.05,
             flipY: target?.metadata?.videoProjection?.flipY ?? false
           });
@@ -2569,15 +2906,31 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         return;
       }
       case 'start-four-point-calibration': {
-        updateStatusMessage('4-point calibration is replaced by projector transform demo. Move/rotate the 摄像头 object directly.');
+        startQuadVideoProjectionEditing(selectionManager.getSelectedId());
         return;
       }
       case 'finish-four-point-calibration': {
-        updateStatusMessage('No finish step is needed in the new projector demo.');
+        applyQuadVideoProjection(selectionManager.getSelectedId());
         return;
       }
       case 'clear-four-point-calibration': {
-        updateStatusMessage('No calibration state to clear in the new projector demo.');
+        clearQuadVideoProjectionPoints(selectionManager.getSelectedId());
+        return;
+      }
+      case 'start-quad-video-projection-editing': {
+        startQuadVideoProjectionEditing(selectionManager.getSelectedId());
+        return;
+      }
+      case 'stop-quad-video-projection-editing': {
+        stopQuadVideoProjectionEditing(selectionManager.getSelectedId());
+        return;
+      }
+      case 'clear-quad-video-projection-points': {
+        clearQuadVideoProjectionPoints(selectionManager.getSelectedId());
+        return;
+      }
+      case 'apply-quad-video-projection': {
+        applyQuadVideoProjection(selectionManager.getSelectedId());
         return;
       }
       case 'update-video-projection': {
@@ -2592,19 +2945,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           updateStatusMessage('Camera device not found');
           return;
         }
-        if (activeProjectorCameraId === selectedId && activeMp4Projector) {
-          activeMp4Projector.patch({
-            gsplatEntity: currentGsplatEntity,
-            projectorEntity: target.entity,
-            videoUrl: nextProjection.videoUrl,
-            opacity: nextProjection.opacity,
-            softEdge: nextProjection.softEdge,
-            flipY: nextProjection.flipY,
-            enabledProjection: nextProjection.enabled
-          });
-        } else if (nextProjection.enabled && nextProjection.videoUrl) {
-          ensureMp4ProjectorForCamera(selectedId, nextProjection);
-        }
+        updateActiveProjectorFromProjection(selectedId, nextProjection);
         updateStatusMessage('Projection updated');
         return;
       }
@@ -2628,13 +2969,20 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     bimProxyManager,
     markerManager,
     gsplatPointPicker,
-    shouldPrioritizeScenePick: () => Boolean(robotDogPatrolController.getEditingRobotDogId()),
+    shouldPrioritizeScenePick: () => Boolean(robotDogPatrolController.getEditingRobotDogId() || getEditingQuadProjectionCameraId()),
     pickBusinessObject,
     onBusinessObjectPick: (hit) => {
       selectionManager.select(hit.objectId);
       updateStatusMessage(`Selected object: ${hit.object.displayName ?? hit.object.name}`);
     },
     onGsplatPick: (hit) => {
+      const editingQuadCameraId = getEditingQuadProjectionCameraId();
+      if (editingQuadCameraId) {
+        addQuadVideoProjectionPoint(editingQuadCameraId, hit.worldPoint);
+        selectionManager.select(editingQuadCameraId);
+        return;
+      }
+
       const markerEntity = markerManager.marker;
       if (markerEntity) {
         sceneObjectManager.addObject({
@@ -2667,6 +3015,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       setPickStatus('picked', `GSplat point picked: ${formatPointLog(hit.worldPoint)}`);
     },
     onFallbackPick: (hit) => {
+      const editingQuadCameraId = getEditingQuadProjectionCameraId();
+      if (editingQuadCameraId) {
+        addQuadVideoProjectionPoint(editingQuadCameraId, hit.point);
+        selectionManager.select(editingQuadCameraId);
+        return;
+      }
+
       const markerEntity = markerManager.marker;
       if (markerEntity) {
         sceneObjectManager.addObject({
@@ -2845,6 +3200,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     openContextMenu,
     closeContextMenu,
     enableCameraVideoProjection,
+    disableCameraVideoProjection,
+    updateCameraVideoProjection,
+    toggleCameraVideoProjection,
+    setVideoProjectionMode,
+    startQuadVideoProjectionEditing,
+    stopQuadVideoProjectionEditing,
+    addQuadVideoProjectionPoint,
+    clearQuadVideoProjectionPoints,
+    applyQuadVideoProjection,
     testVideoPreviewPlane(videoUrl = '/assets/test.mp4') {
       return enableCameraVideoProjection('camera_0', { videoUrl });
     },
