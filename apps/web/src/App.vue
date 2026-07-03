@@ -6,6 +6,7 @@ import ViewportPanel from './components/ViewportPanel.vue';
 import InspectorPanel from './components/InspectorPanel.vue';
 import BottomPanel from './components/BottomPanel.vue';
 import ContextMenu from './components/ContextMenu.vue';
+import EditModeBanner from './components/editor/EditModeBanner.vue';
 import { createMiniEditorRuntime } from './runtime/createMiniEditorRuntime.js';
 import { UI_FLAGS } from './config/uiFlags.js';
 import { fetchApiHealth } from './api/healthApi.js';
@@ -29,12 +30,14 @@ const viewportPanelRef = ref(null);
 const canvasRef = ref(null);
 const assetUploadInputRef = ref(null);
 const runtime = ref(null);
+const bottomDrawerMode = ref(null);
 const MAX_UI_LOGS = 100;
 
 const snapshot = reactive({
   objects: [],
   selectedId: null,
   selectedObject: null,
+  activeEditMode: null,
   alignment: {
     position: [0, 0, 0],
     rotation: [0, 0, 0],
@@ -111,6 +114,7 @@ function syncSnapshot(next) {
   snapshot.objects = next.objects;
   snapshot.selectedId = next.selectedId;
   snapshot.selectedObject = next.selectedObject;
+  snapshot.activeEditMode = next.activeEditMode ?? null;
   snapshot.alignment = next.alignment;
   snapshot.steps = next.steps;
   snapshot.logs = next.logs;
@@ -179,6 +183,94 @@ const selectedAsset = computed(() => (
     ? snapshot.assets.find((asset) => asset.id === snapshot.selectedAssetId) ?? null
     : null
 ));
+
+const objectCount = computed(() => snapshot.objects.length);
+
+const activeContextMenu = computed(() => {
+  if (snapshot.assetContextMenu.open) {
+    return {
+      open: true,
+      kind: 'asset',
+      x: snapshot.assetContextMenu.x,
+      y: snapshot.assetContextMenu.y
+    };
+  }
+
+  return {
+    open: snapshot.contextMenu.open,
+    kind: 'scene-object',
+    x: snapshot.contextMenu.x,
+    y: snapshot.contextMenu.y
+  };
+});
+
+const contextMenuObject = computed(() => {
+  if (!snapshot.contextMenu.objectId) {
+    return null;
+  }
+
+  return snapshot.objects.find((object) => object.id === snapshot.contextMenu.objectId) ?? null;
+});
+
+const contextMenuAsset = computed(() => {
+  if (!snapshot.assetContextMenu.assetId) {
+    return null;
+  }
+
+  return snapshot.assets.find((asset) => asset.id === snapshot.assetContextMenu.assetId) ?? null;
+});
+
+const currentEditBanner = computed(() => {
+  const selectedObject = snapshot.selectedObject;
+  const projectionEditingObject = snapshot.objects.find((object) => (
+    object.type === 'cameraDevice' && object.metadata?.videoProjection?.quadEditing
+  ));
+  const routeEditingObject = snapshot.objects.find((object) => (
+    object.type === 'robotDog' && object.metadata?.patrol?.routeEditing
+  ));
+
+  if (snapshot.activeEditMode === 'buildingEnvelopeDrawing') {
+    return {
+      label: '编辑模式',
+      title: '正在绘制建筑多边体',
+      description: '点击地图添加点位，闭合后创建高度为 0 的对象，随后可在右侧属性中设置高度。',
+      actions: [
+        { action: 'undo-building-envelope-point', label: '撤销上一点' },
+        { action: 'finish-building-envelope-drawing', label: '闭合并创建', variant: 'primary' },
+        { action: 'cancel-building-envelope-drawing', label: '取消', variant: 'danger' }
+      ]
+    };
+  }
+
+  if (snapshot.activeEditMode === 'quadVideoProjection' || projectionEditingObject) {
+    const quadPointCount = projectionEditingObject?.metadata?.videoProjection?.quadPoints?.length ?? 0;
+    return {
+      label: '编辑模式',
+      title: '正在选择四点投影',
+      description: `按左上、右上、右下、左下顺序点击地图。当前已选 ${quadPointCount} / 4 点。`,
+      actions: [
+        { action: 'clear-quad-video-projection-points', label: '清空四点' },
+        { action: 'apply-quad-video-projection', label: '应用四点投影', variant: 'primary', disabled: quadPointCount !== 4 },
+        { action: 'stop-quad-video-projection-editing', label: '取消', variant: 'danger' }
+      ]
+    };
+  }
+
+  if (routeEditingObject || selectedObject?.metadata?.patrol?.routeEditing) {
+    return {
+      label: '编辑模式',
+      title: '正在编辑机器狗路线',
+      description: '点击地图添加路线点，完成后可开始巡航。',
+      actions: [
+        { action: 'robot-dog-clear-route', label: '清空路线' },
+        { action: 'robot-dog-start-patrol', label: '开始巡航', variant: 'primary' },
+        { action: 'robot-dog-stop-edit', label: '取消', variant: 'danger' }
+      ]
+    };
+  }
+
+  return null;
+});
 
 async function checkApiHealth() {
   try {
@@ -286,57 +378,6 @@ async function restoreScene() {
   }
 }
 
-onMounted(() => {
-  const nextRuntime = createMiniEditorRuntime({
-    canvas: canvasRef.value,
-    viewportElement: viewportPanelRef.value?.viewportBody ?? viewportPanelRef.value?.$el
-  });
-  runtime.value = nextRuntime;
-  unsubscribe = nextRuntime.subscribe(syncSnapshot);
-  checkApiHealth();
-  refreshAssets();
-});
-
-onBeforeUnmount(() => {
-  if (unsubscribe) {
-    unsubscribe();
-  }
-});
-
-const contextMenuObject = computed(() => {
-  if (!snapshot.contextMenu.objectId) {
-    return null;
-  }
-
-  return snapshot.objects.find((object) => object.id === snapshot.contextMenu.objectId) ?? null;
-});
-
-const contextMenuAsset = computed(() => {
-  if (!snapshot.assetContextMenu.assetId) {
-    return null;
-  }
-
-  return snapshot.assets.find((asset) => asset.id === snapshot.assetContextMenu.assetId) ?? null;
-});
-
-const activeContextMenu = computed(() => {
-  if (snapshot.assetContextMenu.open) {
-    return {
-      open: true,
-      kind: 'asset',
-      x: snapshot.assetContextMenu.x,
-      y: snapshot.assetContextMenu.y
-    };
-  }
-
-  return {
-    open: snapshot.contextMenu.open,
-    kind: 'scene-object',
-    x: snapshot.contextMenu.x,
-    y: snapshot.contextMenu.y
-  };
-});
-
 function runToolbar(action) {
   runtime.value?.handleToolbarAction(action);
 }
@@ -410,6 +451,10 @@ function openAssetContextMenu({ assetId, x, y }) {
     x,
     y
   };
+}
+
+function toggleBottomDrawer(mode) {
+  bottomDrawerMode.value = bottomDrawerMode.value === mode ? null : mode;
 }
 
 async function handleDeleteAsset(asset) {
@@ -567,6 +612,66 @@ function onInspectorAction(action, payload) {
   runtime.value?.handleInspectorAction(action, payload);
 }
 
+function onToolbarCommand({ command, payload }) {
+  switch (command) {
+    case 'toolbar-action':
+      runToolbar(payload);
+      return;
+    case 'create-object':
+      createHierarchyObject(payload);
+      return;
+    case 'focus-selected':
+      onInspectorAction('focus-selected');
+      return;
+    case 'focus-map':
+      onInspectorAction('focus-map');
+      return;
+    case 'clear-marker':
+      onInspectorAction('clear-marker');
+      return;
+    case 'toggle-projection-enabled':
+      onInspectorAction('toggle-projection-enabled');
+      return;
+    case 'projection-mode':
+      onInspectorAction('update-video-projection', { mode: payload });
+      if (payload === 'quad' || payload === 'quadOverlay') {
+        onInspectorAction('start-quad-video-projection-editing');
+      }
+      return;
+    case 'robot-dog-start-edit':
+      onInspectorAction('robot-dog-start-edit', {
+        robotDogId: snapshot.selectedObject?.id
+      });
+      return;
+    case 'robot-dog-start-patrol':
+      onInspectorAction('robot-dog-start-patrol', {
+        robotDogId: snapshot.selectedObject?.id
+      });
+      return;
+    case 'save-scene':
+      syncCurrentScene();
+      return;
+    default:
+      return;
+  }
+}
+
+function onBannerAction(action) {
+  switch (action) {
+    case 'robot-dog-clear-route':
+      onInspectorAction(action, { robotDogId: snapshot.selectedObject?.id });
+      return;
+    case 'robot-dog-start-patrol':
+      onInspectorAction(action, { robotDogId: snapshot.selectedObject?.id });
+      return;
+    case 'robot-dog-stop-edit':
+      onInspectorAction(action, { robotDogId: snapshot.selectedObject?.id });
+      return;
+    default:
+      onInspectorAction(action);
+  }
+}
+
 function onContextMenuAction(action) {
   if (snapshot.assetContextMenu.open) {
     if (action === 'process-asset') {
@@ -608,17 +713,30 @@ function closeContextMenu() {
     y: 0
   };
 }
+
+onMounted(() => {
+  const nextRuntime = createMiniEditorRuntime({
+    canvas: canvasRef.value,
+    viewportElement: viewportPanelRef.value?.viewportBody ?? viewportPanelRef.value?.$el
+  });
+  runtime.value = nextRuntime;
+  unsubscribe = nextRuntime.subscribe(syncSnapshot);
+  checkApiHealth();
+  refreshAssets();
+});
+
+onBeforeUnmount(() => {
+  if (unsubscribe) {
+    unsubscribe();
+  }
+});
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'has-bottom-drawer': Boolean(bottomDrawerMode) }">
     <ToolbarPanel
       :status-message="snapshot.statusMessage"
-      @create-robot-dog="runToolbar('create-robot-dog')"
-      @reset-camera="runToolbar('reset-camera')"
-      @toggle-bim="runToolbar('toggle-bim')"
-      @debug-bim="runToolbar('debug-bim')"
-      @clear-marker="runToolbar('clear-marker')"
+      @command="onToolbarCommand"
     />
 
     <input
@@ -639,14 +757,13 @@ function closeContextMenu() {
         @toggle-visible="onHierarchyToggle"
         @open-context-menu="onHierarchyContextMenu"
         @delete-selected="runToolbar('hierarchy-delete')"
-        @duplicate="runToolbar('hierarchy-duplicate')"
-        @more="runToolbar('hierarchy-more')"
         @toggle-add-menu="toggleHierarchyAddMenu"
         @create-object="createHierarchyObject"
       />
 
       <section class="main-area">
         <ViewportPanel ref="viewportPanelRef" :status-summary="snapshot.statusSummary">
+          <EditModeBanner :mode="currentEditBanner" @action="onBannerAction" />
           <canvas id="app-canvas" ref="canvasRef"></canvas>
         </ViewportPanel>
 
@@ -656,6 +773,10 @@ function closeContextMenu() {
           :logs="snapshot.logs"
           :api-status="snapshot.apiStatus"
           :scene-api-status="snapshot.sceneApiStatus"
+          :drawer-mode="bottomDrawerMode"
+          :status-message="snapshot.statusMessage"
+          :status-summary="snapshot.statusSummary"
+          :object-count="objectCount"
           @select-asset="onAssetSelect"
           @open-asset-context-menu="openAssetContextMenu"
           @refresh-assets="refreshAssets"
@@ -663,6 +784,7 @@ function closeContextMenu() {
           @restore-scene="restoreScene"
           @sync-current-scene="syncCurrentScene"
           @test-scene-api="testSceneApi"
+          @toggle-drawer="toggleBottomDrawer"
         />
       </section>
 

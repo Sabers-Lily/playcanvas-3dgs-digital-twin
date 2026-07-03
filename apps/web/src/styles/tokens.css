@@ -1,0 +1,49 @@
+:root {
+  --bg-app: #0b1017;
+  --bg-viewport: #080d14;
+  --bg-panel: #121923;
+  --bg-panel-soft: #182230;
+  --bg-card: #151f2b;
+  --bg-field: #202b38;
+  --bg-elevated: #1d2835;
+
+  --border-subtle: #263241;
+  --border-strong: #344255;
+
+  --text-primary: #e6edf3;
+  --text-secondary: #9aa8b6;
+  --text-muted: #64748b;
+
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-soft: rgba(59, 130, 246, 0.16);
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+
+  --shadow-panel: 0 18px 45px rgba(0, 0, 0, 0.24);
+  --shadow-float: 0 14px 36px rgba(0, 0, 0, 0.3);
+
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+
+  --topbar-height: 44px;
+  --left-panel-width: 260px;
+  --right-panel-width: 360px;
+  --statusbar-height: 28px;
+  --bottom-drawer-height: 240px;
+}

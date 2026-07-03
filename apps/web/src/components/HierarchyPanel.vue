@@ -1,5 +1,9 @@
 <script setup>
-defineProps({
+import { computed } from 'vue';
+import { UI_FLAGS } from '../config/uiFlags.js';
+import ObjectStatusChip from './editor/ObjectStatusChip.vue';
+
+const props = defineProps({
   objects: {
     type: Array,
     default: () => []
@@ -27,48 +31,84 @@ const emit = defineEmits([
 
 const ADD_OBJECT_ITEMS = [
   { type: 'buildingEnvelope', label: '建筑多边体' },
+  { type: 'cameraDevice', label: '摄像头' },
   { type: 'empty', label: '空对象' },
   { type: 'robotDog', label: '机器狗' },
-  { type: 'cameraDevice', label: '摄像头' },
   { type: 'device', label: '设备' },
   { type: 'hotspot', label: '热点' },
   { type: 'annotation', label: '标注' },
   { type: 'routePoint', label: '路线点' }
 ];
 
+const GROUP_DEFINITIONS = [
+  { key: 'maps', label: '地图' },
+  { key: 'buildings', label: '建筑' },
+  { key: 'cameras', label: '摄像头' },
+  { key: 'robots', label: '机器狗' },
+  { key: 'helpers', label: '辅助对象' },
+  { key: 'others', label: '其他' }
+];
+
 function typeIcon(type) {
   switch (type) {
     case 'gsplat':
-      return '[G]';
-    case 'bim-proxy':
-      return '[B]';
-    case 'marker':
-      return '[M]';
-    case 'camera':
-      return '[C]';
-    case 'robot':
-    case 'robotDog':
-      return '[R]';
-    case 'cameraDevice':
-      return '[V]';
+      return '图';
     case 'buildingEnvelope':
-      return '[E]';
-    case 'device':
-      return '[D]';
-    case 'hotspot':
-      return '[H]';
-    case 'annotation':
-      return '[A]';
-    case 'routePoint':
-      return '[P]';
-    case 'empty':
-      return '[ ]';
+      return '建';
+    case 'cameraDevice':
+    case 'camera':
+      return '视';
+    case 'robotDog':
+    case 'robot':
+      return '机';
+    case 'marker':
     case 'debug':
-      return '[D]';
+      return '辅';
+    case 'empty':
+      return '空';
     default:
-      return '[ ]';
+      return '物';
   }
 }
+
+function groupKeyForObject(object) {
+  switch (object.type) {
+    case 'gsplat':
+      return 'maps';
+    case 'buildingEnvelope':
+      return 'buildings';
+    case 'camera':
+    case 'cameraDevice':
+      return 'cameras';
+    case 'robot':
+    case 'robotDog':
+      return 'robots';
+    case 'debug':
+    case 'marker':
+      return 'helpers';
+    default:
+      return 'others';
+  }
+}
+
+const groupedObjects = computed(() => {
+  const groups = new Map(GROUP_DEFINITIONS.map((group) => [group.key, []]));
+
+  (props.objects || []).forEach((object) => {
+    const key = groupKeyForObject(object);
+    if (key === 'helpers' && !UI_FLAGS.showDebugHelpersInHierarchy) {
+      return;
+    }
+    groups.get(key)?.push(object);
+  });
+
+  return GROUP_DEFINITIONS
+    .map((group) => ({
+      ...group,
+      objects: groups.get(group.key) ?? []
+    }))
+    .filter((group) => group.objects.length > 0);
+});
 
 function onContextMenu(event, objectId) {
   event.preventDefault();
@@ -79,70 +119,69 @@ function onContextMenu(event, objectId) {
     y: event.clientY
   });
 }
-
-function createObject(type) {
-  emit('create-object', type);
-}
 </script>
 
 <template>
   <aside class="panel left-panel">
-    <div class="panel-header panel-header-tools">
+    <div class="panel-header">
       <span>层级</span>
-      <div class="panel-tools hierarchy-panel-tools">
-        <div class="hierarchy-add-menu-wrap">
-          <button class="toolbar-icon-button" type="button" title="添加场景对象" @click="$emit('toggle-add-menu')">+</button>
-          <div class="toolbar-menu hierarchy-add-menu" :hidden="!addMenuOpen">
-            <div class="hierarchy-add-title">添加对象</div>
+      <div class="panel-tools">
+        <div class="toolbar-menu-group">
+          <button class="toolbar-icon-button" type="button" title="添加对象" @click="$emit('toggle-add-menu')">+</button>
+          <div class="toolbar-menu" :hidden="!addMenuOpen">
+            <div class="toolbar-menu-title">添加对象</div>
             <button
               v-for="item in ADD_OBJECT_ITEMS"
               :key="item.type"
               type="button"
-              @click="createObject(item.type)"
+              @click="$emit('create-object', item.type)"
             >
               {{ item.label }}
             </button>
           </div>
         </div>
-        <button class="toolbar-icon-button" type="button" title="Duplicate" @click="$emit('duplicate')">D</button>
-        <button class="toolbar-icon-button" type="button" title="Delete" @click="$emit('delete-selected')">X</button>
-        <button class="toolbar-icon-button" type="button" title="More" @click="$emit('more')">...</button>
+        <button class="toolbar-icon-button" type="button" title="删除选中" @click="$emit('delete-selected')">删</button>
       </div>
     </div>
+
     <div class="panel-body hierarchy-body">
-      <div class="tree-root">ROOT</div>
-      <div class="tree-group">
-        <div
-          v-for="object in objects"
-          :key="object.id"
-          class="tree-item"
-          :class="{ 'is-selected': object.id === selectedId }"
-          :data-object-id="object.id"
-          role="button"
-          tabindex="0"
-          :title="object.typeLabel ?? object.type"
-          @click="$emit('select', object.id)"
-          @keydown.enter.prevent="$emit('select', object.id)"
-          @keydown.space.prevent="$emit('select', object.id)"
-          @contextmenu="onContextMenu($event, object.id)"
-        >
-          <span class="tree-main">
-            <span class="tree-icon">{{ typeIcon(object.type) }}</span>
-            <span class="tree-label">{{ object.displayName ?? object.name }}</span>
-          </span>
-          <span class="tree-side">
-            <span class="tree-status">{{ object.status }}</span>
-            <button
-              class="tree-eye"
-              type="button"
-              :disabled="!object.canHide"
-              @click.stop.prevent="$emit('toggle-visible', object.id)"
-            >
-              {{ object.visible ? 'ON' : 'OFF' }}
-            </button>
-          </span>
+      <div class="tree-root">场景对象</div>
+
+      <section v-for="group in groupedObjects" :key="group.key" class="tree-group-card">
+        <div class="tree-group-header">
+          <span>{{ group.label }}</span>
+          <span>{{ group.objects.length }}</span>
         </div>
-      </div>
+
+        <div class="tree-group-list">
+          <div
+            v-for="object in group.objects"
+            :key="object.id"
+            class="tree-item"
+            :class="{ 'is-selected': object.id === selectedId }"
+            :title="object.typeLabel ?? object.type"
+            @click="$emit('select', object.id)"
+            @contextmenu="onContextMenu($event, object.id)"
+          >
+            <span class="tree-main">
+              <span class="tree-icon">{{ typeIcon(object.type) }}</span>
+              <span class="tree-label hierarchy-name">{{ object.displayName ?? object.name }}</span>
+            </span>
+
+            <span class="tree-side">
+              <ObjectStatusChip :value="object.status" />
+              <button
+                class="tree-eye"
+                type="button"
+                :disabled="!object.canHide"
+                @click.stop.prevent="$emit('toggle-visible', object.id)"
+              >
+                {{ object.visible ? '显' : '隐' }}
+              </button>
+            </span>
+          </div>
+        </div>
+      </section>
     </div>
   </aside>
 </template>

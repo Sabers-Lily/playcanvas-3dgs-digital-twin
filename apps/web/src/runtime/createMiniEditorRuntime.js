@@ -474,6 +474,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     objects: sceneObjectManager.getObjectSnapshots(),
     selectedId: selectionManager.getSelectedId(),
     selectedObject: selectionManager.getSelectedSnapshot(),
+    activeEditMode: null,
     alignment: bimAlignmentManager.getCurrent(),
     steps: {
       move: 1,
@@ -949,6 +950,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     state.objects = sceneObjectManager.getObjectSnapshots();
     state.selectedId = selectionManager.getSelectedId();
     state.selectedObject = selectionManager.getSelectedSnapshot();
+    state.activeEditMode = getCurrentEditMode();
     state.alignment = bimAlignmentManager.getCurrent();
     state.assets = buildAssetsSnapshot();
     state.statusMessage = statusState.message;
@@ -962,6 +964,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       objects: state.objects,
       selectedId: state.selectedId,
       selectedObject: state.selectedObject,
+      activeEditMode: state.activeEditMode,
       alignment: state.alignment,
       steps: { ...state.steps },
       logs: [...state.logs],

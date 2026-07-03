@@ -6,5 +6,7 @@ export const UI_FLAGS = {
   showDebugAssets: false,
   showAssetInternalStatus: false,
   showLogDebugButtons: false,
-  showApiDebugStatus: false
+  showApiDebugStatus: false,
+  showNudgeControls: false,
+  showStepControls: false
 };
