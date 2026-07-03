@@ -44,3 +44,4 @@ apps/web/public/assets/*.gltf
 apps/web/public/assets/*.ply
 apps/web/public/assets/*.obj
 apps/web/public/assets/converted/*.sog
+*.mp4
