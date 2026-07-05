@@ -398,6 +398,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       updateStatusMessage(message);
     }
   });
+  const sceneRenderPicker = new pc.Picker(app, 1, 1);
 
   const cameraController = new CameraController({
     app,
@@ -1311,6 +1312,66 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return sceneObject;
   }
 
+  let hoveredBuildingEnvelopeId = null;
+  let lastSelectedBuildingEnvelopeId = null;
+
+  function syncBuildingEnvelopeVisualState(objectId) {
+    const sceneObject = getBuildingEnvelopeObject(objectId);
+    if (!sceneObject?.entity) {
+      return false;
+    }
+
+    buildingEnvelopeController.bindEnvelopeEntity(
+      sceneObject.entity,
+      objectId,
+      sceneObject.metadata?.envelope
+    );
+    return buildingEnvelopeController.updateEnvelopeInteractionState(
+      sceneObject.entity,
+      sceneObject.metadata?.envelope,
+      {
+        hovered: hoveredBuildingEnvelopeId === objectId,
+        selected: selectionManager.getSelectedId() === objectId
+      }
+    );
+  }
+
+  function setBuildingEnvelopeHover(objectId) {
+    const nextHoveredId = objectId && getBuildingEnvelopeObject(objectId) ? objectId : null;
+    if (hoveredBuildingEnvelopeId === nextHoveredId) {
+      canvas.style.cursor = nextHoveredId ? 'pointer' : 'default';
+      return false;
+    }
+
+    const previousHoveredId = hoveredBuildingEnvelopeId;
+    hoveredBuildingEnvelopeId = nextHoveredId;
+    canvas.style.cursor = nextHoveredId ? 'pointer' : 'default';
+
+    if (previousHoveredId) {
+      syncBuildingEnvelopeVisualState(previousHoveredId);
+      console.log(`[BuildingEnvelope] hover left: objectId=${previousHoveredId}`);
+    }
+
+    if (nextHoveredId) {
+      syncBuildingEnvelopeVisualState(nextHoveredId);
+      console.log(`[BuildingEnvelope] hover entered: objectId=${nextHoveredId}`);
+    }
+
+    return true;
+  }
+
+  function clearBuildingEnvelopeHover() {
+    return setBuildingEnvelopeHover(null);
+  }
+
+  function isSelectableHoverBlocked() {
+    return Boolean(
+      buildingEnvelopeController.isDrawing()
+      || getEditingQuadProjectionCameraId()
+      || robotDogPatrolController.getEditingRobotDogId()
+    );
+  }
+
   function createBuildingEnvelopeFromPoints(points, options = {}) {
     const envelope = createDefaultEnvelopeMetadata({
       ...options,
@@ -1336,6 +1397,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     app.root.addChild(entity);
     const id = options.id || createBusinessObjectId(BUILDING_ENVELOPE_TYPE, 'building_envelope');
+    buildingEnvelopeController.bindEnvelopeEntity(entity, id, envelope);
     sceneObjectManager.addObject({
       id,
       name: displayName,
@@ -1365,6 +1427,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       childCount: entity.children.length
     });
     selectionManager.select(id);
+    syncBuildingEnvelopeVisualState(id);
     console.log(`[BuildingEnvelope] created: objectId=${id} height=0`);
     updateStatusMessage(`[BuildingEnvelope] created: objectId=${id} height=0`);
     return { id, entity };
@@ -1386,6 +1449,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     // Preserve the serialized source of truth and rebuild the render entity from it.
     buildingEnvelopeController.rebuildEnvelopeEntity(sceneObject.entity, nextEnvelope);
+    buildingEnvelopeController.bindEnvelopeEntity(sceneObject.entity, objectId, nextEnvelope);
     sceneObjectManager.updateObject(objectId, {
       transform: getTransformFromEntity(sceneObject.entity),
       metadata: {
@@ -1393,6 +1457,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         envelope: nextEnvelope
       }
     });
+    syncBuildingEnvelopeVisualState(objectId);
     console.log(`[BuildingEnvelope] updated: objectId=${objectId}`);
     updateStatusMessage(`[BuildingEnvelope] updated: objectId=${objectId}`);
     return true;
@@ -1453,6 +1518,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    if (hoveredBuildingEnvelopeId === objectId) {
+      clearBuildingEnvelopeHover();
+    }
+
     const deleted = deleteSceneObject(objectId);
     if (deleted) {
       console.log(`[BuildingEnvelope] deleted: objectId=${objectId}`);
@@ -1509,6 +1578,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    clearBuildingEnvelopeHover();
     selectionManager.select(resolvedId);
     return robotDogPatrolController.startRouteEditing(resolvedId);
   }
@@ -1669,6 +1739,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    clearBuildingEnvelopeHover();
     activeEditMode = ACTIVE_EDIT_MODE.BUILDING_ENVELOPE_DRAWING;
     cancelPlacementMode();
     buildingEnvelopeController.startDrawing(options);
@@ -1780,13 +1851,256 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return result;
   }
 
+  function resolveSceneObjectIdFromMeshPick(meshInstance) {
+    if (meshInstance?._sceneObjectId) {
+      return meshInstance._sceneObjectId;
+    }
+
+    let node = meshInstance?.node ?? null;
+    while (node) {
+      if (node._sceneObjectId) {
+        return node._sceneObjectId;
+      }
+      node = node.parent ?? null;
+    }
+
+    return null;
+  }
+
+  function pickRenderableBusinessObject(screenX, screenY) {
+    if (!sceneRenderPicker || !app?.scene || !camera?.camera || !canvas) {
+      return null;
+    }
+
+    const width = Math.max(1, Math.floor(canvas.clientWidth || canvas.width || 1));
+    const height = Math.max(1, Math.floor(canvas.clientHeight || canvas.height || 1));
+    sceneRenderPicker.resize?.(width, height);
+
+    const worldLayer = app.scene.layers?.getLayerByName?.('World');
+    if (worldLayer) {
+      sceneRenderPicker.prepare(camera.camera, app.scene, [worldLayer]);
+    } else {
+      sceneRenderPicker.prepare(camera.camera, app.scene);
+    }
+
+    const selection = sceneRenderPicker.getSelection?.(Math.floor(screenX), Math.floor(screenY), 1, 1) ?? [];
+    for (const meshInstance of selection) {
+      const objectId = resolveSceneObjectIdFromMeshPick(meshInstance);
+      if (!objectId) {
+        continue;
+      }
+
+      const object = sceneObjectManager.getObject(objectId);
+      if (!object || !BUSINESS_OBJECT_DEFINITIONS[object.type] || !object.visible) {
+        continue;
+      }
+
+      return {
+        objectId,
+        object,
+        distanceSq: 0
+      };
+    }
+
+    return null;
+  }
+
+  function getEnvelopeUpAxisVector(upAxis = 'z') {
+    return upAxis === 'y' ? new pc.Vec3(0, 1, 0) : new pc.Vec3(0, 0, 1);
+  }
+
+  function projectWorldPointToScreen(worldPosition) {
+    const point = camera.camera.worldToScreen(worldPosition);
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || point.z < 0 || point.z > 1) {
+      return null;
+    }
+
+    return {
+      x: point.x,
+      y: point.y,
+      z: point.z
+    };
+  }
+
+  function isPointInsideScreenPolygon(point, polygon) {
+    let inside = false;
+    for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index, index += 1) {
+      const currentPoint = polygon[index];
+      const previousPoint = polygon[previous];
+      const intersects = ((currentPoint.y > point.y) !== (previousPoint.y > point.y))
+        && (point.x < ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) / ((previousPoint.y - currentPoint.y) || 1e-6) + currentPoint.x);
+      if (intersects) {
+        inside = !inside;
+      }
+    }
+
+    return inside;
+  }
+
+  function getDistanceToSegmentSquared(point, start, end) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    if (Math.abs(dx) <= 1e-6 && Math.abs(dy) <= 1e-6) {
+      const pointDx = point.x - start.x;
+      const pointDy = point.y - start.y;
+      return pointDx * pointDx + pointDy * pointDy;
+    }
+
+    const t = Math.max(0, Math.min(1, (((point.x - start.x) * dx) + ((point.y - start.y) * dy)) / ((dx * dx) + (dy * dy))));
+    const closestX = start.x + (dx * t);
+    const closestY = start.y + (dy * t);
+    const pointDx = point.x - closestX;
+    const pointDy = point.y - closestY;
+    return pointDx * pointDx + pointDy * pointDy;
+  }
+
+  function getProjectedEnvelopePoints(envelope) {
+    const baseWorldPoints = cloneEnvelopePoints(envelope?.points);
+    if (baseWorldPoints.length < 3) {
+      return null;
+    }
+
+    const height = Math.max(0, readNumberValue(envelope?.height, 0));
+    const upAxisVector = getEnvelopeUpAxisVector(envelope?.upAxis ?? 'z');
+    const baseScreenPoints = [];
+    const topScreenPoints = [];
+
+    for (let index = 0; index < baseWorldPoints.length; index += 1) {
+      const sourcePoint = baseWorldPoints[index];
+      const worldPoint = new pc.Vec3(
+        sourcePoint.position?.[0] ?? 0,
+        sourcePoint.position?.[1] ?? 0,
+        sourcePoint.position?.[2] ?? 0
+      );
+      const projectedBasePoint = projectWorldPointToScreen(worldPoint);
+      if (!projectedBasePoint) {
+        return null;
+      }
+      baseScreenPoints.push(projectedBasePoint);
+
+      if (height > 0.0001) {
+        const projectedTopPoint = projectWorldPointToScreen(worldPoint.clone().add(upAxisVector.clone().mulScalar(height)));
+        if (!projectedTopPoint) {
+          return null;
+        }
+        topScreenPoints.push(projectedTopPoint);
+      }
+    }
+
+    return {
+      baseScreenPoints,
+      topScreenPoints,
+      hasVolume: height > 0.0001
+    };
+  }
+
+  function getBuildingEnvelopePickHit(object, screenX, screenY) {
+    const envelope = object?.metadata?.envelope;
+    if (!envelope) {
+      return null;
+    }
+
+    const projectedEnvelope = getProjectedEnvelopePoints(envelope);
+    if (!projectedEnvelope) {
+      return null;
+    }
+
+    const point = { x: screenX, y: screenY };
+    const edgeThresholdSq = 18 * 18;
+    let bestDistanceSq = Number.POSITIVE_INFINITY;
+    let insideVisibleFace = false;
+
+    const collectEdgeDistance = (polygon) => {
+      for (let index = 0; index < polygon.length; index += 1) {
+        const nextIndex = (index + 1) % polygon.length;
+        bestDistanceSq = Math.min(
+          bestDistanceSq,
+          getDistanceToSegmentSquared(point, polygon[index], polygon[nextIndex])
+        );
+      }
+    };
+
+    if (envelope.outlineVisible !== false) {
+      collectEdgeDistance(projectedEnvelope.baseScreenPoints);
+      if (projectedEnvelope.hasVolume && envelope.topVisible !== false) {
+        collectEdgeDistance(projectedEnvelope.topScreenPoints);
+      }
+      if (projectedEnvelope.hasVolume && envelope.sideVisible !== false) {
+        for (let index = 0; index < projectedEnvelope.baseScreenPoints.length; index += 1) {
+          bestDistanceSq = Math.min(
+            bestDistanceSq,
+            getDistanceToSegmentSquared(
+              point,
+              projectedEnvelope.baseScreenPoints[index],
+              projectedEnvelope.topScreenPoints[index]
+            )
+          );
+        }
+      }
+    }
+
+    if (envelope.fillVisible !== false) {
+      if (!projectedEnvelope.hasVolume) {
+        insideVisibleFace = isPointInsideScreenPolygon(point, projectedEnvelope.baseScreenPoints);
+      } else {
+        if (envelope.topVisible !== false) {
+          insideVisibleFace = insideVisibleFace || isPointInsideScreenPolygon(point, projectedEnvelope.topScreenPoints);
+        }
+
+        if (!insideVisibleFace && envelope.sideVisible !== false) {
+          for (let index = 0; index < projectedEnvelope.baseScreenPoints.length; index += 1) {
+            const nextIndex = (index + 1) % projectedEnvelope.baseScreenPoints.length;
+            const sideQuad = [
+              projectedEnvelope.baseScreenPoints[index],
+              projectedEnvelope.baseScreenPoints[nextIndex],
+              projectedEnvelope.topScreenPoints[nextIndex],
+              projectedEnvelope.topScreenPoints[index]
+            ];
+            if (isPointInsideScreenPolygon(point, sideQuad)) {
+              insideVisibleFace = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (!insideVisibleFace && bestDistanceSq > edgeThresholdSq) {
+      return null;
+    }
+
+    return {
+      objectId: object.id,
+      object,
+      distanceSq: insideVisibleFace ? 0 : bestDistanceSq
+    };
+  }
+
   function pickBusinessObject(screenX, screenY) {
+    const renderHit = pickRenderableBusinessObject(screenX, screenY);
+    if (renderHit) {
+      console.debug(`[Pick] render business object hit: ${renderHit.objectId}`);
+      return renderHit;
+    }
+
     let closest = null;
 
     sceneObjectManager.getObjects()
       .filter((object) => BUSINESS_OBJECT_DEFINITIONS[object.type] && object.visible)
       .forEach((object) => {
         if (!object.entity) {
+          return;
+        }
+
+        if (object.type === BUILDING_ENVELOPE_TYPE) {
+          const envelopeHit = getBuildingEnvelopePickHit(object, screenX, screenY);
+          if (!envelopeHit) {
+            return;
+          }
+
+          if (!closest || envelopeHit.distanceSq < closest.distanceSq) {
+            closest = envelopeHit;
+          }
           return;
         }
 
@@ -2969,6 +3283,7 @@ function setVideoProjectionMode(cameraId, mode) {
       return false;
     }
 
+    clearBuildingEnvelopeHover();
     selectionManager.select(cameraId);
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
@@ -3447,12 +3762,31 @@ function setVideoProjectionMode(cameraId, mode) {
       buildingEnvelopeController.isDrawing()
     ),
     pickBusinessObject,
+    shouldTrackHover: () => !isSelectableHoverBlocked(),
+    hoverBusinessObject: pickBusinessObject,
     onBusinessObjectPick: (hit) => {
       if (buildingEnvelopeController.isDrawing()) {
         return;
       }
+      clearBuildingEnvelopeHover();
       selectionManager.select(hit.objectId);
+      if (hit.object?.type === BUILDING_ENVELOPE_TYPE) {
+        console.log(`[BuildingEnvelope] selected: objectId=${hit.objectId}`);
+      }
       updateStatusMessage(`Selected object: ${hit.object.displayName ?? hit.object.name}`);
+    },
+    onBusinessObjectHover: (hit) => {
+      canvas.style.cursor = 'pointer';
+      if (hit.object?.type === BUILDING_ENVELOPE_TYPE) {
+        setBuildingEnvelopeHover(hit.objectId);
+        return;
+      }
+
+      clearBuildingEnvelopeHover();
+    },
+    onBusinessObjectHoverClear: () => {
+      canvas.style.cursor = 'default';
+      clearBuildingEnvelopeHover();
     },
     onGsplatPick: (hit) => {
       if (buildingEnvelopeController.isDrawing()) {
@@ -3552,10 +3886,33 @@ function setVideoProjectionMode(cameraId, mode) {
   });
 
   sceneObjectManager.subscribe(() => {
+    if (hoveredBuildingEnvelopeId && !getBuildingEnvelopeObject(hoveredBuildingEnvelopeId)) {
+      hoveredBuildingEnvelopeId = null;
+      canvas.style.cursor = 'default';
+    }
+    if (hoveredBuildingEnvelopeId) {
+      syncBuildingEnvelopeVisualState(hoveredBuildingEnvelopeId);
+    }
+    const selectedEnvelopeId = selectionManager.getSelectedId();
+    if (selectedEnvelopeId) {
+      syncBuildingEnvelopeVisualState(selectedEnvelopeId);
+    }
     emitState();
   });
 
   selectionManager.subscribe((selectionId, selected) => {
+    const previousSelectedEnvelopeId = lastSelectedBuildingEnvelopeId;
+    lastSelectedBuildingEnvelopeId = selected?.type === BUILDING_ENVELOPE_TYPE ? selectionId : null;
+
+    if (previousSelectedEnvelopeId && previousSelectedEnvelopeId !== lastSelectedBuildingEnvelopeId) {
+      syncBuildingEnvelopeVisualState(previousSelectedEnvelopeId);
+      console.log('[BuildingEnvelope] selection cleared');
+    }
+
+    if (lastSelectedBuildingEnvelopeId) {
+      syncBuildingEnvelopeVisualState(lastSelectedBuildingEnvelopeId);
+    }
+
     if (selected) {
       pushLog(`Selected: ${selected.name}`);
     }

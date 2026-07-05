@@ -280,8 +280,32 @@ export class BuildingEnvelopeController {
     return this.meshBuilder.createEnvelopeEntity(name, cloneEnvelope(metadata));
   }
 
+  bindEnvelopeEntity(entity, objectId, metadata = null) {
+    if (!entity || !objectId) {
+      return false;
+    }
+
+    this.meshBuilder.tagEnvelopeEntity(entity, objectId);
+    if (metadata) {
+      this.meshBuilder.applyEnvelopeVisualState(entity, cloneEnvelope(metadata), {
+        hovered: false,
+        selected: false
+      });
+    }
+    return true;
+  }
+
   rebuildEnvelopeEntity(entity, metadata) {
     return this.meshBuilder.rebuildEnvelopeEntity(entity, cloneEnvelope(metadata));
+  }
+
+  updateEnvelopeInteractionState(entity, metadata, interactionState = {}) {
+    if (!entity || !metadata) {
+      return false;
+    }
+
+    this.meshBuilder.applyEnvelopeVisualState(entity, cloneEnvelope(metadata), interactionState);
+    return true;
   }
 
   buildEnvelopeFromSnapshot() {

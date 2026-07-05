@@ -3,6 +3,9 @@ import * as pc from 'playcanvas';
 const OUTLINE_THICKNESS = 0.08;
 const ZERO_HEIGHT_FOOTPRINT_THICKNESS = 0.12;
 const MIN_FACE_HEIGHT = 0.0001;
+const NORMAL_OUTLINE_COLOR = '#8B1E1E';
+const HOVER_OUTLINE_COLOR = '#FF5A3D';
+const SELECTED_OUTLINE_COLOR = '#3B82F6';
 
 function getPointPosition(point) {
   if (Array.isArray(point)) {
@@ -109,6 +112,69 @@ function destroyChildren(entity) {
   }
 
   [...entity.children].forEach((child) => child.destroy());
+}
+
+function traverseEntityTree(entity, visitor) {
+  if (!entity || typeof visitor !== 'function') {
+    return;
+  }
+
+  visitor(entity);
+  entity.children?.forEach((child) => traverseEntityTree(child, visitor));
+}
+
+function isOutlineEntityName(name = '') {
+  return typeof name === 'string' && name.startsWith('__building_envelope_outline_');
+}
+
+function isFillEntityName(name = '') {
+  return typeof name === 'string'
+    && (name.startsWith('__building_envelope_face_') || name.startsWith('__building_envelope_footprint_'));
+}
+
+function applyMaterialStyle(material, { color, opacity, emissiveScale = 0.08 }) {
+  if (!material) {
+    return;
+  }
+
+  const resolvedColor = colorFromHex(color);
+  const resolvedOpacity = clampOpacity(opacity);
+  material.diffuse = resolvedColor.clone();
+  material.emissive = resolvedColor.clone().mulScalar(emissiveScale);
+  material.opacity = resolvedOpacity;
+  material.blendType = resolvedOpacity < 1 ? pc.BLEND_NORMAL : pc.BLEND_NONE;
+  material.depthWrite = resolvedOpacity >= 1;
+  material.update();
+}
+
+function resolveInteractionVisualState(interactionState = {}) {
+  if (interactionState.selected) {
+    return {
+      outlineColor: SELECTED_OUTLINE_COLOR,
+      outlineOpacity: 1,
+      outlineEmissiveScale: 0.58,
+      fillOpacityBoost: 0.15,
+      fillEmissiveScale: 0.2
+    };
+  }
+
+  if (interactionState.hovered) {
+    return {
+      outlineColor: HOVER_OUTLINE_COLOR,
+      outlineOpacity: 1,
+      outlineEmissiveScale: 0.5,
+      fillOpacityBoost: 0.1,
+      fillEmissiveScale: 0.16
+    };
+  }
+
+  return {
+    outlineColor: NORMAL_OUTLINE_COLOR,
+    outlineOpacity: 0.95,
+    outlineEmissiveScale: 0.4,
+    fillOpacityBoost: 0,
+    fillEmissiveScale: 0.12
+  };
 }
 
 function createBoxEntity(name, material) {
@@ -355,6 +421,61 @@ export class BuildingEnvelopeMeshBuilder {
     return entity;
   }
 
+  tagEnvelopeEntity(entity, objectId) {
+    if (!entity || !objectId) {
+      return;
+    }
+
+    traverseEntityTree(entity, (node) => {
+      node.tags?.add?.('selectable');
+      node.tags?.add?.('buildingEnvelope');
+      node._sceneObjectId = objectId;
+      node._sceneObjectType = 'buildingEnvelope';
+      node.render?.meshInstances?.forEach?.((meshInstance) => {
+        meshInstance._sceneObjectId = objectId;
+        meshInstance._sceneObjectType = 'buildingEnvelope';
+      });
+    });
+  }
+
+  applyEnvelopeVisualState(entity, envelope, interactionState = {}) {
+    if (!entity) {
+      return;
+    }
+
+    const resolvedEnvelope = envelope ?? {};
+    const fillColor = normalizeHexColor(resolvedEnvelope.color);
+    const fillOpacity = clampOpacity(
+      (resolvedEnvelope.opacity ?? 0.25) + resolveInteractionVisualState(interactionState).fillOpacityBoost,
+      0.25
+    );
+    const visualState = resolveInteractionVisualState(interactionState);
+
+    traverseEntityTree(entity, (node) => {
+      const material = node.render?.material;
+      if (!material) {
+        return;
+      }
+
+      if (isOutlineEntityName(node.name)) {
+        applyMaterialStyle(material, {
+          color: visualState.outlineColor,
+          opacity: visualState.outlineOpacity,
+          emissiveScale: visualState.outlineEmissiveScale
+        });
+        return;
+      }
+
+      if (isFillEntityName(node.name)) {
+        applyMaterialStyle(material, {
+          color: fillColor,
+          opacity: fillOpacity,
+          emissiveScale: visualState.fillEmissiveScale
+        });
+      }
+    });
+  }
+
   rebuildEnvelopeEntity(entity, envelope) {
     if (!entity || !envelope) {
       return null;
@@ -500,6 +621,11 @@ export class BuildingEnvelopeMeshBuilder {
         signedArea: signedArea2d(localTopPoints, upAxis)
       });
     }
+
+    this.applyEnvelopeVisualState(entity, envelope, {
+      hovered: false,
+      selected: false
+    });
 
     return entity;
   }

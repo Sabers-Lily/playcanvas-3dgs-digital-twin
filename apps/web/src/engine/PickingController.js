@@ -16,7 +16,11 @@ export class PickingController {
     gsplatPointPicker,
     shouldPrioritizeScenePick,
     pickBusinessObject,
+    shouldTrackHover,
+    hoverBusinessObject,
     onBusinessObjectPick,
+    onBusinessObjectHover,
+    onBusinessObjectHoverClear,
     onGsplatPick,
     onFallbackPick,
     onPick,
@@ -30,7 +34,11 @@ export class PickingController {
     this.gsplatPointPicker = gsplatPointPicker || null;
     this.shouldPrioritizeScenePick = shouldPrioritizeScenePick || null;
     this.pickBusinessObject = pickBusinessObject || null;
+    this.shouldTrackHover = shouldTrackHover || null;
+    this.hoverBusinessObject = hoverBusinessObject || pickBusinessObject || null;
     this.onBusinessObjectPick = onBusinessObjectPick || null;
+    this.onBusinessObjectHover = onBusinessObjectHover || null;
+    this.onBusinessObjectHoverClear = onBusinessObjectHoverClear || null;
     this.onGsplatPick = onGsplatPick || null;
     this.onFallbackPick = onFallbackPick || null;
     this.onPick = onPick || null;
@@ -40,19 +48,28 @@ export class PickingController {
     this.clickThresholdSq = 16;
     this.lastPickWorldPosition = null;
     this.lastPickSource = null;
+    this.hoveredBusinessObjectId = null;
 
     this.app.mouse?.on(pc.EVENT_MOUSEDOWN, this._onMouseDown, this);
+    this.app.mouse?.on(pc.EVENT_MOUSEMOVE, this._onMouseMove, this);
     this.app.mouse?.on(pc.EVENT_MOUSEUP, this._onMouseUp, this);
     this.app.touch?.on(pc.EVENT_TOUCHSTART, this._onTouchStart, this);
     this.app.touch?.on(pc.EVENT_TOUCHEND, this._onTouchEnd, this);
+    this.canvas?.addEventListener?.('mouseleave', this._handleMouseLeave);
   }
 
   destroy() {
     this.app.mouse?.off(pc.EVENT_MOUSEDOWN, this._onMouseDown, this);
+    this.app.mouse?.off(pc.EVENT_MOUSEMOVE, this._onMouseMove, this);
     this.app.mouse?.off(pc.EVENT_MOUSEUP, this._onMouseUp, this);
     this.app.touch?.off(pc.EVENT_TOUCHSTART, this._onTouchStart, this);
     this.app.touch?.off(pc.EVENT_TOUCHEND, this._onTouchEnd, this);
+    this.canvas?.removeEventListener?.('mouseleave', this._handleMouseLeave);
   }
+
+  _handleMouseLeave = () => {
+    this.clearHover();
+  };
 
   _shouldIgnoreOriginalEvent(originalEvent) {
     if (!originalEvent || originalEvent.target !== this.canvas) {
@@ -97,6 +114,26 @@ export class PickingController {
       y: point.y,
       source: 'mouse'
     };
+  }
+
+  _onMouseMove(event) {
+    const originalEvent = event.event;
+    if (this._shouldIgnoreOriginalEvent(originalEvent)) {
+      this.clearHover();
+      return;
+    }
+
+    if (originalEvent?.buttons) {
+      return;
+    }
+
+    const point = this._getCanvasPointFromClient(originalEvent.clientX, originalEvent.clientY);
+    if (!point) {
+      this.clearHover();
+      return;
+    }
+
+    this.updateHover(point.x, point.y);
   }
 
   async _onMouseUp(event) {
@@ -230,6 +267,37 @@ export class PickingController {
       type: 'fallback',
       ...fallbackHit
     };
+  }
+
+  updateHover(screenX, screenY) {
+    if (this.shouldTrackHover && !this.shouldTrackHover()) {
+      this.clearHover();
+      return null;
+    }
+
+    const businessHit = this.hoverBusinessObject?.(screenX, screenY) ?? null;
+    const nextHoveredId = businessHit?.objectId ?? null;
+    if (nextHoveredId === this.hoveredBusinessObjectId) {
+      return businessHit;
+    }
+
+    this.hoveredBusinessObjectId = nextHoveredId;
+    if (businessHit) {
+      this.onBusinessObjectHover?.(businessHit);
+      return businessHit;
+    }
+
+    this.onBusinessObjectHoverClear?.();
+    return null;
+  }
+
+  clearHover() {
+    if (!this.hoveredBusinessObjectId) {
+      return;
+    }
+
+    this.hoveredBusinessObjectId = null;
+    this.onBusinessObjectHoverClear?.();
   }
 
   clearMarker() {
