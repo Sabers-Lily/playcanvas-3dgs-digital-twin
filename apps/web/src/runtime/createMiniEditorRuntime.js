@@ -1234,6 +1234,29 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return entity;
   }
 
+  function bindSceneObjectEntity(entity, objectId, objectType) {
+    if (!entity || !objectId) {
+      return false;
+    }
+
+    const visit = (node) => {
+      node.tags?.add?.('selectable');
+      if (objectType) {
+        node.tags?.add?.(objectType);
+      }
+      node._sceneObjectId = objectId;
+      node._sceneObjectType = objectType ?? null;
+      node.render?.meshInstances?.forEach?.((meshInstance) => {
+        meshInstance._sceneObjectId = objectId;
+        meshInstance._sceneObjectType = objectType ?? null;
+      });
+      node.children?.forEach?.(visit);
+    };
+
+    visit(entity);
+    return true;
+  }
+
   function createBusinessSceneObject(type, options = {}) {
     const definition = BUSINESS_OBJECT_DEFINITIONS[type];
     if (!definition) {
@@ -1258,6 +1281,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     entity.setLocalPosition(...transform.position);
     entity.setLocalEulerAngles(...transform.rotation);
     entity.setLocalScale(...transform.scale);
+    bindSceneObjectEntity(entity, id, type);
 
     const projectionMetadata = type === 'cameraDevice'
       ? createDefaultVideoProjectionMetadata(id, options.metadata?.videoProjection)
