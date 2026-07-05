@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, markRaw, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import ToolbarPanel from './components/ToolbarPanel.vue';
 import HierarchyPanel from './components/HierarchyPanel.vue';
 import ViewportPanel from './components/ViewportPanel.vue';
@@ -50,6 +50,12 @@ const snapshot = reactive({
   },
   logs: [],
   assets: [],
+  cameraStreams: {
+    cameras: [],
+    statuses: {},
+    projectionRuntimes: {},
+    apiStatus: 'idle'
+  },
   selectedAssetId: null,
   statusMessage: 'Ready',
   statusSummary: {
@@ -94,6 +100,27 @@ function prependUiLog(message) {
   snapshot.logs = [message, ...snapshot.logs].slice(0, MAX_UI_LOGS);
 }
 
+function normalizeCameraStreams(cameraStreams) {
+  const nextCameraStreams = cameraStreams ?? {};
+  const statuses = Object.fromEntries(Object.entries(nextCameraStreams.statuses ?? {}).map(([cameraId, status]) => [cameraId, { ...status }]));
+  const projectionRuntimes = Object.fromEntries(Object.entries(nextCameraStreams.projectionRuntimes ?? {}).map(([cameraId, runtimeState]) => [
+    cameraId,
+    runtimeState?.previewVideoElement
+      ? {
+        ...runtimeState,
+        previewVideoElement: markRaw(runtimeState.previewVideoElement)
+      }
+      : { ...runtimeState }
+  ]));
+
+  return {
+    cameras: Array.isArray(nextCameraStreams.cameras) ? nextCameraStreams.cameras.map((cameraSource) => ({ ...cameraSource })) : [],
+    statuses,
+    projectionRuntimes,
+    apiStatus: nextCameraStreams.apiStatus ?? 'idle'
+  };
+}
+
 function syncSnapshot(next) {
   if (shouldLogPerf()) {
     sceneSyncCount += 1;
@@ -119,6 +146,7 @@ function syncSnapshot(next) {
   snapshot.steps = next.steps;
   snapshot.logs = next.logs;
   snapshot.assets = next.assets;
+  snapshot.cameraStreams = normalizeCameraStreams(next.cameraStreams);
   snapshot.statusMessage = next.statusMessage;
   snapshot.statusSummary = next.statusSummary;
   snapshot.contextMenu = {
@@ -634,7 +662,7 @@ function onToolbarCommand({ command, payload }) {
       return;
     case 'projection-mode':
       onInspectorAction('update-video-projection', { mode: payload });
-      if (payload === 'quad' || payload === 'quadOverlay') {
+      if (payload === 'quad') {
         onInspectorAction('start-quad-video-projection-editing');
       }
       return;
@@ -791,6 +819,7 @@ onBeforeUnmount(() => {
       <InspectorPanel
         :selection="snapshot.selectedObject"
         :selected-asset="selectedAsset"
+        :camera-streams="snapshot.cameraStreams"
         :alignment="snapshot.alignment"
         :steps="snapshot.steps"
         :camera-state="snapshot.cameraState"

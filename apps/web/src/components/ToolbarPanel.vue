@@ -19,10 +19,9 @@ const createItems = [
 ];
 
 const projectionItems = [
-  { command: 'projection-mode', payload: 'cameraFrustum', label: '相机视锥投影', description: '按相机姿态进行投影' },
-  { command: 'projection-mode', payload: 'quad', label: '四点区域投影', description: '选择四点并贴合区域表面' },
-  { command: 'projection-mode', payload: 'quadOverlay', label: '四点覆盖投影', description: '以屏幕覆盖方式投影视频' },
-  { command: 'toggle-projection-enabled', payload: null, label: '启用 / 关闭投影', description: '切换当前投影可见状态' }
+  { command: 'toolbar-action', payload: 'start-quad-video-projection-editing', label: '开始选四点', description: '按左上、右上、右下、左下顺序选择世界锚点' },
+  { command: 'toolbar-action', payload: 'apply-quad-video-projection', label: '应用四点投影', description: '将共享摄像头视频固定到四点世界区域' },
+  { command: 'toggle-projection-enabled', payload: null, label: '启用 / 关闭投影', description: '只开关地图投影，不关闭右侧视频预览' }
 ];
 
 const robotItems = [

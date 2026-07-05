@@ -1,9 +1,11 @@
 import * as pc from 'playcanvas';
+import { getCameraStatus, getCameraStream, listCameras, startCameraStream, stopCameraStream } from '../api/cameras.js';
 import { ASSET_LABELS, ASSET_PATHS } from '../config/assets.js';
 import { BimAlignmentManager, DEFAULT_BIM_ALIGNMENT } from '../engine/BimAlignmentManager.js';
 import { BimProxyManager } from '../engine/BimProxyManager.js';
 import { CameraController } from '../engine/CameraController.js';
 import { BuildingEnvelopeController } from '../engine/BuildingEnvelopeController.js';
+import { CameraVideoRuntime } from '../engine/CameraVideoRuntime.js';
 import { GsplatMp4ProjectorAdapter } from '../engine/GsplatMp4ProjectorAdapter.js';
 import { GsplatPointPicker } from '../engine/GsplatPointPicker.js';
 import { MarkerManager } from '../engine/MarkerManager.js';
@@ -13,6 +15,8 @@ import { SelectableObjectController } from '../engine/SelectableObjectController
 import { SceneObjectManager } from '../editor/SceneObjectManager.js';
 import { SelectionManager } from '../editor/SelectionManager.js';
 import { UI_FLAGS } from '../config/uiFlags.js';
+import { resolveApiUrl } from '../config/apiConfig.js';
+import { CAMERA_SOURCE_TYPES, CAMERA_STREAM_STATUSES } from '../../../../packages/shared/src/cameras.js';
 
 const OBJECT_IDS = {
   camera: 'camera',
@@ -59,6 +63,7 @@ const RESTORABLE_OBJECT_TYPES = new Set([
   'routePoint'
 ]);
 const MAX_LOGS = 100;
+const DEFAULT_TEST_VIDEO_URL = '/assets/test.mp4';
 
 const BUSINESS_OBJECT_DEFINITIONS = {
   empty: {
@@ -135,6 +140,14 @@ function describeError(err) {
   } catch (_jsonError) {
     return String(err);
   }
+}
+
+function describeCameraStreamError(error) {
+  if (error?.code === 'FFMPEG_NOT_FOUND') {
+    return '未找到 ffmpeg，请安装或配置 FFMPEG_PATH';
+  }
+
+  return describeError(error);
 }
 
 function readNumberValue(value, fallback) {
@@ -334,16 +347,19 @@ function createDefaultVideoProjectionMetadata(id, partial = {}) {
   return {
     id,
     enabled: partial.enabled ?? false,
-    mode: partial.mode ?? 'cameraFrustum',
-    videoUrl: partial.videoUrl ?? '/assets/test.mp4',
+    sourceType: partial.sourceType ?? CAMERA_SOURCE_TYPES.CAMERA_STREAM,
+    cameraId: partial.cameraId ?? 'camera1',
+    streamUrl: partial.streamUrl ?? null,
+    mode: partial.mode === 'cameraFrustum' ? 'quadOverlay' : (partial.mode ?? 'quadOverlay'),
+    videoUrl: partial.videoUrl ?? '',
     projectorFov: readNumberValue(partial.projectorFov, 45),
     projectorAspect: readNumberValue(partial.projectorAspect, 1.777),
     projectorNear: readNumberValue(partial.projectorNear, 0.1),
     projectorFar: readNumberValue(partial.projectorFar, 1000),
-    opacity: readNumberValue(partial.opacity, 0.85),
-    softEdge: readNumberValue(partial.softEdge, 0.05),
+    opacity: readNumberValue(partial.opacity, 1),
+    softEdge: readNumberValue(partial.softEdge, 0),
     flipY: Boolean(partial.flipY),
-    replaceMode: Boolean(partial.replaceMode),
+    replaceMode: partial.replaceMode ?? true,
     quadEditing: Boolean(partial.quadEditing),
     quadPoints: cloneQuadPoints(partial.quadPoints),
     quadPlaneTolerance: readNumberValue(partial.quadPlaneTolerance, 0.25)
@@ -509,6 +525,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     },
     logs: ['Ready'],
     assets: [],
+    cameraStreams: {
+      cameras: [],
+      statuses: {},
+      apiStatus: 'idle'
+    },
     uploadedAssets: [],
     statusMessage: 'Ready',
     statusSummary: {
@@ -537,10 +558,188 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   let activeEditMode = null;
   let buildingEnvelopeCounter = 0;
   const quadProjectionHelpers = new Map();
+  const cameraStreamStatuses = new Map();
+  const cameraVideoRuntimes = new Map();
+  let lastCameraVideoRuntimeEmitAt = 0;
   const quadHelperMaterial = new pc.StandardMaterial();
   quadHelperMaterial.diffuse = new pc.Color(0.1, 0.85, 1);
   quadHelperMaterial.emissive = new pc.Color(0.05, 0.35, 0.5);
   quadHelperMaterial.update();
+
+  function buildCameraStreamsSnapshot() {
+    return {
+      cameras: state.cameraStreams.cameras.map((cameraSource) => ({ ...cameraSource })),
+      statuses: Object.fromEntries(Array.from(cameraStreamStatuses.entries()).map(([cameraId, status]) => [cameraId, { ...status }])),
+      projectionRuntimes: Object.fromEntries(Array.from(cameraVideoRuntimes.entries()).map(([cameraId, runtime]) => [cameraId, runtime.getState()])),
+      apiStatus: state.cameraStreams.apiStatus
+    };
+  }
+
+  function setCameraStreamStatus(cameraId, patch = {}) {
+    const current = cameraStreamStatuses.get(cameraId) ?? {
+      cameraId,
+      status: CAMERA_STREAM_STATUSES.IDLE,
+      lastError: null,
+      playUrl: null,
+      absolutePlayUrl: null
+    };
+
+    cameraStreamStatuses.set(cameraId, {
+      ...current,
+      ...patch
+    });
+  }
+
+  function getOrCreateCameraVideoRuntime(cameraId) {
+    const existingRuntime = cameraVideoRuntimes.get(cameraId);
+    if (existingRuntime) {
+      return existingRuntime;
+    }
+
+    const runtime = new CameraVideoRuntime({
+      runtimeId: cameraId
+    });
+    cameraVideoRuntimes.set(cameraId, runtime);
+    return runtime;
+  }
+
+  function ensureCameraVideoRuntime(cameraId, projection = {}) {
+    const runtime = getOrCreateCameraVideoRuntime(cameraId);
+    const resolvedVideoUrl = resolveProjectionVideoUrl(projection);
+
+    runtime.load(resolvedVideoUrl, {
+      loop: projection.sourceType !== CAMERA_SOURCE_TYPES.CAMERA_STREAM
+    }).catch((error) => {
+      console.warn('[CameraVideoRuntime] load failed:', {
+        cameraId,
+        resolvedVideoUrl,
+        error
+      });
+      emitState();
+    });
+
+    return runtime;
+  }
+
+  function resolveProjectionVideoUrl(projection = {}) {
+    if (projection.sourceType === CAMERA_SOURCE_TYPES.CAMERA_STREAM) {
+      return projection.streamUrl || projection.videoUrl || '';
+    }
+
+    if (projection.sourceType === CAMERA_SOURCE_TYPES.CUSTOM_URL) {
+      return projection.videoUrl || '';
+    }
+
+    return projection.videoUrl || DEFAULT_TEST_VIDEO_URL;
+  }
+
+  async function refreshCameraSources() {
+    state.cameraStreams.apiStatus = 'loading';
+    emitState();
+
+    try {
+      const cameras = await listCameras();
+      state.cameraStreams.cameras = Array.isArray(cameras) ? cameras : [];
+      state.cameraStreams.apiStatus = 'ready';
+
+      await Promise.all(state.cameraStreams.cameras.map(async (cameraSource) => {
+        try {
+          const status = await getCameraStatus(cameraSource.id);
+          setCameraStreamStatus(cameraSource.id, status);
+        } catch (error) {
+          console.warn('[CameraStream] status refresh failed:', cameraSource.id, error);
+          setCameraStreamStatus(cameraSource.id, {
+            status: CAMERA_STREAM_STATUSES.ERROR,
+            lastError: describeCameraStreamError(error),
+            lastErrorCode: error?.code || null
+          });
+        }
+      }));
+
+      console.log('[CameraStream] cameras loaded:', state.cameraStreams.cameras.map((entry) => entry.id));
+    } catch (error) {
+      state.cameraStreams.cameras = [];
+      state.cameraStreams.apiStatus = 'error';
+      console.warn('[CameraStream] cameras load failed:', error);
+    }
+
+    emitState();
+  }
+
+  async function startCameraStreamFlow(cameraSourceId) {
+    setCameraStreamStatus(cameraSourceId, {
+      status: CAMERA_STREAM_STATUSES.STARTING,
+      lastError: null
+    });
+    emitState();
+
+    const started = await startCameraStream(cameraSourceId);
+    const latestStatus = await getCameraStatus(cameraSourceId);
+    const nextStatus = {
+      ...started,
+      ...latestStatus
+    };
+    if (nextStatus.status === CAMERA_STREAM_STATUSES.ERROR) {
+      setCameraStreamStatus(cameraSourceId, nextStatus);
+      emitState();
+      const error = new Error(nextStatus.lastError || `Camera stream start failed: ${cameraSourceId}`);
+      error.code = nextStatus.lastErrorCode || 'CAMERA_STREAM_FAILED';
+      throw error;
+    }
+    setCameraStreamStatus(cameraSourceId, nextStatus);
+    console.log(`[CameraStream] stream started: cameraId=${cameraSourceId}`);
+    emitState();
+    return nextStatus;
+  }
+
+  async function stopCameraStreamFlow(cameraSourceId) {
+    const stopped = await stopCameraStream(cameraSourceId);
+    setCameraStreamStatus(cameraSourceId, stopped);
+    console.log(`[CameraStream] stream stopped: cameraId=${cameraSourceId}`);
+    emitState();
+    return stopped;
+  }
+
+  async function bindCameraStreamToProjection(cameraObjectId, cameraSourceId) {
+    try {
+      const streamStatus = await startCameraStreamFlow(cameraSourceId);
+      const streamInfo = await getCameraStream(cameraSourceId);
+      const resolvedStreamUrl = streamInfo.absolutePlayUrl || resolveApiUrl(streamInfo.playUrl);
+      const currentProjection = createDefaultVideoProjectionMetadata(
+        cameraObjectId,
+        sceneObjectManager.getObject(cameraObjectId)?.metadata?.videoProjection
+      );
+
+      updateCameraVideoProjection(cameraObjectId, {
+        ...currentProjection,
+        sourceType: CAMERA_SOURCE_TYPES.CAMERA_STREAM,
+        cameraId: cameraSourceId,
+        videoUrl: resolvedStreamUrl,
+        streamUrl: resolvedStreamUrl,
+        enabled: currentProjection.enabled && (currentProjection.quadPoints?.length ?? 0) === 4
+      });
+
+      setCameraStreamStatus(cameraSourceId, {
+        ...streamStatus,
+        ...streamInfo,
+        status: CAMERA_STREAM_STATUSES.RUNNING
+      });
+      console.log(`[VideoProjection] camera stream bound: objectId=${cameraObjectId} cameraId=${cameraSourceId}`);
+      updateStatusMessage(`Camera stream bound: ${cameraSourceId}`);
+      emitState();
+      return true;
+    } catch (error) {
+      console.warn('[VideoProjection] bind camera stream failed:', error);
+      setCameraStreamStatus(cameraSourceId, {
+        status: CAMERA_STREAM_STATUSES.ERROR,
+        lastError: describeCameraStreamError(error),
+        lastErrorCode: error?.code || null
+      });
+      updateStatusMessage(`Bind camera stream failed: ${describeCameraStreamError(error)}`);
+      emitState();
+      return false;
+    }
+  }
 
   function syncCameraProjectionMetadata(cameraId, patch = {}) {
     const target = sceneObjectManager.getObject(cameraId);
@@ -570,6 +769,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     activeMp4Projector.destroy();
     activeMp4Projector = null;
+    activeProjectorCameraId = null;
   }
 
   function ensureMp4ProjectorForCamera(cameraId, options = {}) {
@@ -582,6 +782,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       ...cameraObject.metadata?.videoProjection,
       ...options
     });
+    const projectionRuntime = ensureCameraVideoRuntime(cameraId, projection);
+    const videoElement = projectionRuntime.getVideoElement();
+    const resolvedVideoUrl = resolveProjectionVideoUrl(projection);
 
     const shouldRecreate = !activeMp4Projector || activeProjectorCameraId !== cameraId;
     if (shouldRecreate) {
@@ -591,12 +794,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         gsplatEntity: currentGsplatEntity,
         mainCameraEntity: camera,
         projectorEntity: cameraObject.entity,
+        videoElement,
         mode: projection.mode,
         projectorFov: projection.projectorFov,
         projectorAspect: projection.projectorAspect,
         projectorNear: projection.projectorNear,
         projectorFar: projection.projectorFar,
-        videoUrl: projection.videoUrl,
+        videoUrl: resolvedVideoUrl,
         opacity: projection.opacity,
         softEdge: projection.softEdge,
         flipY: projection.flipY,
@@ -613,12 +817,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         gsplatEntity: currentGsplatEntity,
         mainCameraEntity: camera,
         projectorEntity: cameraObject.entity,
+        videoElement,
         mode: projection.mode,
         projectorFov: projection.projectorFov,
         projectorAspect: projection.projectorAspect,
         projectorNear: projection.projectorNear,
         projectorFar: projection.projectorFar,
-        videoUrl: projection.videoUrl,
+        videoUrl: resolvedVideoUrl,
         opacity: projection.opacity,
         softEdge: projection.softEdge,
         flipY: projection.flipY,
@@ -720,22 +925,17 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     const nextProjection = syncCameraProjectionMetadata(cameraId, {
       ...currentProjection,
-      mode: currentProjection.mode === 'quadOverlay' ? 'quadOverlay' : 'quad',
+      mode: currentProjection.mode === 'quad' ? 'quad' : 'quadOverlay',
       quadEditing: !editingCompleted,
       quadPoints
     });
 
-    if (activeProjectorCameraId === cameraId && activeMp4Projector && nextProjection) {
-      activeMp4Projector.patch({
-        mode: nextProjection.mode,
-        quadPoints: nextProjection.quadPoints,
-        quadPlaneTolerance: nextProjection.quadPlaneTolerance,
-        enabledProjection: nextProjection.enabled
-      });
-    }
-
     rebuildQuadProjectionHelpers(cameraId);
-    console.log(`[QuadVideoProjection] point added: objectId=${cameraId} index=${index} position=${point.position.join(',')}`);
+    console.log(`[FourPointProjection] picked world point ${index}`, {
+      x: worldPosition.x,
+      y: worldPosition.y,
+      z: worldPosition.z
+    });
     updateStatusMessage(`四点区域投影点位: ${quadPoints.length} / 4`);
 
     if (editingCompleted) {
@@ -755,9 +955,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
+      enabled: false,
       quadEditing: false,
       quadPoints: []
     });
+    if (activeProjectorCameraId === cameraId) {
+      destroyActiveMp4Projector();
+    }
     clearQuadProjectionHelpers(cameraId);
     updateStatusMessage('四点区域投影点位已清空');
     return true;
@@ -777,26 +981,34 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       quadPoints: projection.quadPoints?.length ?? 0
     });
 
-    if (activeProjectorCameraId === cameraId && activeMp4Projector) {
-      activeMp4Projector.patch({
-        gsplatEntity: currentGsplatEntity,
-        projectorEntity: target.entity,
-        mode: projection.mode,
-        projectorFov: projection.projectorFov,
-        projectorAspect: projection.projectorAspect,
-        projectorNear: projection.projectorNear,
-        projectorFar: projection.projectorFar,
-        videoUrl: projection.videoUrl,
-        opacity: projection.opacity,
-        softEdge: projection.softEdge,
-        flipY: projection.flipY,
-        replaceMode: projection.replaceMode,
-        quadPoints: projection.quadPoints,
-        quadPlaneTolerance: projection.quadPlaneTolerance,
-        enabledProjection: projection.enabled
-      });
-    } else if (projection.enabled && projection.videoUrl) {
-      ensureMp4ProjectorForCamera(cameraId, projection);
+    ensureCameraVideoRuntime(cameraId, projection);
+
+    if (projection.enabled && (projection.quadPoints?.length ?? 0) === 4) {
+      if (activeProjectorCameraId === cameraId && activeMp4Projector) {
+        activeMp4Projector.patch({
+          gsplatEntity: currentGsplatEntity,
+          mainCameraEntity: camera,
+          projectorEntity: target.entity,
+          videoElement: getOrCreateCameraVideoRuntime(cameraId).getVideoElement(),
+          mode: projection.mode,
+          projectorFov: projection.projectorFov,
+          projectorAspect: projection.projectorAspect,
+          projectorNear: projection.projectorNear,
+          projectorFar: projection.projectorFar,
+          videoUrl: resolveProjectionVideoUrl(projection),
+          opacity: projection.opacity,
+          softEdge: projection.softEdge,
+          flipY: projection.flipY,
+          replaceMode: projection.replaceMode,
+          quadPoints: projection.quadPoints,
+          quadPlaneTolerance: projection.quadPlaneTolerance,
+          enabledProjection: true
+        });
+      } else {
+        ensureMp4ProjectorForCamera(cameraId, projection);
+      }
+    } else if (activeProjectorCameraId === cameraId) {
+      destroyActiveMp4Projector();
     }
   }
 
@@ -822,6 +1034,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     window.robotDogPatrolController = robotDogPatrolController;
     window.placementMode = placementMode;
     window.gsplatVideoProjector = activeMp4Projector;
+    window.cameraVideoRuntimes = cameraVideoRuntimes;
     window.createRobotDog = createRobotDog;
     window.startRobotDogRouteEditing = startRobotDogRouteEditing;
     window.startRobotDogPatrol = startRobotDogPatrol;
@@ -830,7 +1043,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     window.disableCameraVideoProjection = disableCameraVideoProjection;
     window.updateCameraVideoProjection = updateCameraVideoProjection;
     window.toggleCameraVideoProjection = toggleCameraVideoProjection;
-    window.setVideoProjectionMode = setVideoProjectionMode;
     window.startQuadVideoProjectionEditing = startQuadVideoProjectionEditing;
     window.stopQuadVideoProjectionEditing = stopQuadVideoProjectionEditing;
     window.addQuadVideoProjectionPoint = addQuadVideoProjectionPoint;
@@ -979,6 +1191,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     state.activeEditMode = getCurrentEditMode();
     state.alignment = bimAlignmentManager.getCurrent();
     state.assets = buildAssetsSnapshot();
+    state.cameraStreams = buildCameraStreamsSnapshot();
     state.statusMessage = statusState.message;
     state.statusSummary = {
       sog: statusState.sog.detail,
@@ -995,6 +1208,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       steps: { ...state.steps },
       logs: [...state.logs],
       assets: state.assets,
+      cameraStreams: state.cameraStreams,
       statusMessage: state.statusMessage,
       statusSummary: { ...state.statusSummary },
       contextMenu: { ...state.contextMenu },
@@ -2211,9 +2425,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
               sourceName: filename
             }
           });
-          if (activeMp4Projector && activeProjectorCameraId) {
-            activeMp4Projector.patch({ gsplatEntity: entity });
-          }
           updateDebugHandles();
 
           destroySplatState(previousState);
@@ -3199,24 +3410,30 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       cameraObject = sceneObjectManager.getObject(cameraId);
     }
 
-    const videoUrl = options.videoUrl || cameraObject.metadata?.videoProjection?.videoUrl || '/assets/test.mp4';
-    const projection = ensureMp4ProjectorForCamera(cameraId, {
+    const sourceType = options.sourceType ?? cameraObject.metadata?.videoProjection?.sourceType ?? CAMERA_SOURCE_TYPES.CAMERA_STREAM;
+    const videoUrl = options.videoUrl || cameraObject.metadata?.videoProjection?.videoUrl || DEFAULT_TEST_VIDEO_URL;
+    const projection = createDefaultVideoProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
       ...options,
       enabled: true,
+      sourceType,
       videoUrl,
-      mode: options.mode ?? cameraObject.metadata?.videoProjection?.mode ?? 'cameraFrustum',
-      opacity: readNumberValue(options.opacity, cameraObject.metadata?.videoProjection?.opacity ?? 0.85),
-      softEdge: readNumberValue(options.softEdge, cameraObject.metadata?.videoProjection?.softEdge ?? 0.05),
+      streamUrl: options.streamUrl ?? cameraObject.metadata?.videoProjection?.streamUrl ?? null,
+      cameraId: options.cameraId ?? cameraObject.metadata?.videoProjection?.cameraId ?? 'camera1',
+      mode: options.mode ?? cameraObject.metadata?.videoProjection?.mode ?? 'quadOverlay',
+      opacity: readNumberValue(options.opacity, cameraObject.metadata?.videoProjection?.opacity ?? 1),
+      softEdge: readNumberValue(options.softEdge, cameraObject.metadata?.videoProjection?.softEdge ?? 0),
       flipY: options.flipY ?? cameraObject.metadata?.videoProjection?.flipY ?? false,
-      replaceMode: options.replaceMode ?? cameraObject.metadata?.videoProjection?.replaceMode ?? false,
+      replaceMode: options.replaceMode ?? cameraObject.metadata?.videoProjection?.replaceMode ?? true,
       quadPoints: options.quadPoints ?? cameraObject.metadata?.videoProjection?.quadPoints ?? [],
       quadPlaneTolerance: readNumberValue(options.quadPlaneTolerance, cameraObject.metadata?.videoProjection?.quadPlaneTolerance ?? 0.25)
     });
+    syncCameraProjectionMetadata(cameraId, projection);
+    updateActiveProjectorFromProjection(cameraId, projection);
 
     console.log('[Projection] enableCameraVideoProjection', {
       cameraId,
-      resolvedVideoUrl: videoUrl
+      resolvedVideoUrl: resolveProjectionVideoUrl(projection)
     });
     updateStatusMessage(`Projection enabled: ${cameraId}`);
     return {
@@ -3232,8 +3449,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
-    if (activeProjectorCameraId === cameraId && activeMp4Projector) {
-      activeMp4Projector.patch({ enabledProjection: false });
+    if (activeProjectorCameraId === cameraId) {
+      destroyActiveMp4Projector();
     }
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
@@ -3252,11 +3469,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     const nextProjection = syncCameraProjectionMetadata(cameraId, patch);
     updateActiveProjectorFromProjection(cameraId, nextProjection);
-    if (nextProjection?.mode === 'quad') {
-      rebuildQuadProjectionHelpers(cameraId);
-    } else if (nextProjection?.mode === 'quadOverlay') {
-      rebuildQuadProjectionHelpers(cameraId);
-    }
+    rebuildQuadProjectionHelpers(cameraId);
     updateStatusMessage('Projection updated');
     return nextProjection;
   }
@@ -3271,8 +3484,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return disableCameraVideoProjection(cameraId);
   }
 
-function setVideoProjectionMode(cameraId, mode) {
-    const nextMode = ['quad', 'quadOverlay'].includes(mode) ? mode : 'cameraFrustum';
+  function setVideoProjectionMode(cameraId, mode) {
+    const nextMode = mode === 'quad' ? 'quad' : (mode === 'quadOverlay' ? 'quadOverlay' : 'cameraFrustum');
     const cameraObject = sceneObjectManager.getObject(cameraId);
     if (!cameraObject || cameraObject.type !== 'cameraDevice') {
       updateStatusMessage('Camera device not found');
@@ -3298,11 +3511,18 @@ function setVideoProjectionMode(cameraId, mode) {
     selectionManager.select(cameraId);
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
-      mode: cameraObject.metadata?.videoProjection?.mode === 'quadOverlay' ? 'quadOverlay' : 'quad',
+      enabled: false,
+      mode: 'quadOverlay',
       quadEditing: true,
       quadPoints: []
     });
+    if (activeProjectorCameraId === cameraId) {
+      destroyActiveMp4Projector();
+    }
     clearQuadProjectionHelpers(cameraId);
+    console.log('[FourPointProjection] start selecting', {
+      cameraId
+    });
     updateStatusMessage('开始选择四点区域投影');
     return true;
   }
@@ -3318,6 +3538,7 @@ function setVideoProjectionMode(cameraId, mode) {
       ...cameraObject.metadata?.videoProjection,
       quadEditing: false
     });
+    rebuildQuadProjectionHelpers(cameraId);
     updateStatusMessage('停止选择四点区域投影');
     return true;
   }
@@ -3338,14 +3559,18 @@ function setVideoProjectionMode(cameraId, mode) {
     updateCameraVideoProjection(cameraId, {
       ...projection,
       enabled: true,
-      mode: projection.mode === 'quadOverlay' ? 'quadOverlay' : 'quad',
+      mode: 'quadOverlay',
       quadEditing: false,
       quadPoints: projection.quadPoints,
       quadPlaneTolerance: projection.quadPlaneTolerance,
-      opacity: projection.opacity,
-      softEdge: projection.softEdge,
+      opacity: readNumberValue(projection.opacity, 1),
+      softEdge: readNumberValue(projection.softEdge, 0),
       flipY: projection.flipY,
-      replaceMode: projection.replaceMode
+      replaceMode: projection.replaceMode ?? true
+    });
+    console.log('[FourPointProjection] apply world anchors', {
+      cameraId,
+      anchors: projection.quadPoints.map((point) => point.position)
     });
     updateStatusMessage('四点区域投影已应用');
     return true;
@@ -3420,6 +3645,12 @@ function setVideoProjectionMode(cameraId, mode) {
         return;
       case 'create-robot-dog':
         createRobotDog();
+        return;
+      case 'start-quad-video-projection-editing':
+        startQuadVideoProjectionEditing(selectionManager.getSelectedId());
+        return;
+      case 'apply-quad-video-projection':
+        applyQuadVideoProjection(selectionManager.getSelectedId());
         return;
       case 'load-local-sog':
         if (payload) {
@@ -3667,15 +3898,83 @@ function setVideoProjectionMode(cameraId, mode) {
           updateStatusMessage('No selection');
           return;
         }
-        enableCameraVideoProjection(selectedId, { videoUrl: '/assets/test.mp4' })
+        enableCameraVideoProjection(selectedId, {
+          sourceType: CAMERA_SOURCE_TYPES.TEST_MP4,
+          cameraId: null,
+          streamUrl: null,
+          videoUrl: DEFAULT_TEST_VIDEO_URL
+        })
           .then(() => {
-            console.log('[Projection] resolvedVideoUrl:', '/assets/test.mp4');
-            updateStatusMessage('Test video bound: /assets/test.mp4');
+            console.log('[Projection] resolvedVideoUrl:', DEFAULT_TEST_VIDEO_URL);
+            updateStatusMessage(`Test video bound: ${DEFAULT_TEST_VIDEO_URL}`);
           })
           .catch((error) => {
             console.warn('[Projection] bind test video failed:', error);
             updateStatusMessage(`Bind test video failed: ${describeError(error)}`);
           });
+        return;
+      }
+      case 'refresh-camera-sources': {
+        refreshCameraSources().catch((error) => {
+          console.warn('[CameraStream] refresh failed:', error);
+        });
+        return;
+      }
+      case 'start-camera-stream': {
+        const cameraSourceId = payload?.cameraId;
+        if (!cameraSourceId) {
+          updateStatusMessage('Camera source not selected');
+          return;
+        }
+        startCameraStreamFlow(cameraSourceId)
+          .then(() => {
+            updateStatusMessage(`Camera stream started: ${cameraSourceId}`);
+          })
+          .catch((error) => {
+            console.warn('[CameraStream] stream start failed:', error);
+            setCameraStreamStatus(cameraSourceId, {
+              status: CAMERA_STREAM_STATUSES.ERROR,
+              lastError: describeCameraStreamError(error),
+              lastErrorCode: error?.code || null
+            });
+            updateStatusMessage(`Camera stream start failed: ${describeCameraStreamError(error)}`);
+            emitState();
+          });
+        return;
+      }
+      case 'stop-camera-stream': {
+        const cameraSourceId = payload?.cameraId;
+        if (!cameraSourceId) {
+          updateStatusMessage('Camera source not selected');
+          return;
+        }
+        stopCameraStreamFlow(cameraSourceId)
+          .then(() => {
+            updateStatusMessage(`Camera stream stopped: ${cameraSourceId}`);
+          })
+          .catch((error) => {
+            console.warn('[CameraStream] stream stop failed:', error);
+            setCameraStreamStatus(cameraSourceId, {
+              status: CAMERA_STREAM_STATUSES.ERROR,
+              lastError: describeError(error)
+            });
+            updateStatusMessage(`Camera stream stop failed: ${describeError(error)}`);
+            emitState();
+          });
+        return;
+      }
+      case 'bind-camera-stream': {
+        const selectedId = selectionManager.getSelectedId();
+        const cameraSourceId = payload?.cameraId;
+        if (!selectedId) {
+          updateStatusMessage('No selection');
+          return;
+        }
+        if (!cameraSourceId) {
+          updateStatusMessage('Camera source not selected');
+          return;
+        }
+        bindCameraStreamToProjection(selectedId, cameraSourceId);
         return;
       }
       case 'toggle-projection-enabled': {
@@ -3686,20 +3985,25 @@ function setVideoProjectionMode(cameraId, mode) {
         }
         const target = sceneObjectManager.getObject(selectedId);
         const nextEnabled = !target?.metadata?.videoProjection?.enabled;
-        if (activeProjectorCameraId === selectedId && activeMp4Projector) {
-          activeMp4Projector.patch({ enabledProjection: nextEnabled });
-        } else if (nextEnabled) {
-          ensureMp4ProjectorForCamera(selectedId, {
-            ...target?.metadata?.videoProjection,
-      enabled: true,
-      videoUrl: target?.metadata?.videoProjection?.videoUrl || '/assets/test.mp4',
-      opacity: target?.metadata?.videoProjection?.opacity ?? 0.85,
-      softEdge: target?.metadata?.videoProjection?.softEdge ?? 0.05,
-      flipY: target?.metadata?.videoProjection?.flipY ?? false,
-      replaceMode: target?.metadata?.videoProjection?.replaceMode ?? false
-    });
+        const currentProjection = createDefaultVideoProjectionMetadata(selectedId, target?.metadata?.videoProjection);
+
+        if (nextEnabled && (currentProjection.quadPoints?.length ?? 0) !== 4) {
+          updateStatusMessage('四点覆盖投影需要先选择 4 个世界锚点');
+          return;
         }
-        syncCameraProjectionMetadata(selectedId, { enabled: nextEnabled });
+
+        if (!nextEnabled && activeProjectorCameraId === selectedId) {
+          destroyActiveMp4Projector();
+        }
+
+        updateCameraVideoProjection(selectedId, {
+          ...currentProjection,
+          enabled: nextEnabled,
+          mode: currentProjection.mode === 'quad' ? 'quad' : 'quadOverlay',
+          replaceMode: currentProjection.replaceMode ?? true,
+          opacity: readNumberValue(currentProjection.opacity, 1),
+          softEdge: readNumberValue(currentProjection.softEdge, 0)
+        });
         updateStatusMessage(`${target?.displayName ?? selectedId} projection ${nextEnabled ? 'enabled' : 'disabled'}`);
         return;
       }
@@ -3738,15 +4042,20 @@ function setVideoProjectionMode(cameraId, mode) {
           return;
         }
         const target = sceneObjectManager.getObject(selectedId);
-        const nextProjection = syncCameraProjectionMetadata(selectedId, payload ?? {});
+        const nextProjection = syncCameraProjectionMetadata(selectedId, {
+          ...(payload ?? {}),
+          mode: payload?.mode === 'cameraFrustum'
+            ? 'cameraFrustum'
+            : (payload?.mode === 'quad' ? 'quad' : 'quadOverlay'),
+          sourceType: payload?.sourceType ?? CAMERA_SOURCE_TYPES.CAMERA_STREAM,
+          replaceMode: payload?.replaceMode ?? target?.metadata?.videoProjection?.replaceMode ?? true
+        });
         if (!target || !nextProjection) {
           updateStatusMessage('Camera device not found');
           return;
         }
         updateActiveProjectorFromProjection(selectedId, nextProjection);
-        if (nextProjection?.mode === 'quad' || nextProjection?.mode === 'quadOverlay') {
-          rebuildQuadProjectionHelpers(selectedId);
-        }
+        rebuildQuadProjectionHelpers(selectedId);
         updateStatusMessage('Projection updated');
         return;
       }
@@ -4002,8 +4311,21 @@ function setVideoProjectionMode(cameraId, mode) {
   });
 
   app.on('update', (dt) => {
+    let shouldEmitCameraRuntimeState = false;
+    cameraVideoRuntimes.forEach((runtime) => {
+      if (runtime.update()) {
+        shouldEmitCameraRuntimeState = true;
+      }
+    });
+
     activeMp4Projector?.update();
     robotDogPatrolController.update(dt ?? 0);
+
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (shouldEmitCameraRuntimeState && now - lastCameraVideoRuntimeEmitAt > 250) {
+      lastCameraVideoRuntimeEmitAt = now;
+      emitState();
+    }
   });
 
   if (UI_FLAGS.createDefaultCameraDevice && !sceneObjectManager.getObject('camera_0')) {
@@ -4015,6 +4337,9 @@ function setVideoProjectionMode(cameraId, mode) {
 
   loadSavedAlignment({ silent: true });
   robotDogPatrolController.syncExistingRobotDogs();
+  refreshCameraSources().catch((error) => {
+    console.warn('[CameraStream] initial refresh failed:', error);
+  });
   updateDebugHandles();
   resizeViewport();
   flushState();
@@ -4059,7 +4384,6 @@ function setVideoProjectionMode(cameraId, mode) {
     disableCameraVideoProjection,
     updateCameraVideoProjection,
     toggleCameraVideoProjection,
-    setVideoProjectionMode,
     startQuadVideoProjectionEditing,
     stopQuadVideoProjectionEditing,
     addQuadVideoProjectionPoint,
@@ -4079,7 +4403,7 @@ function setVideoProjectionMode(cameraId, mode) {
     setBuildingEnvelopeOpacity,
     setBuildingEnvelopeOutlineVisible,
     deleteBuildingEnvelope,
-    testVideoPreviewPlane(videoUrl = '/assets/test.mp4') {
+    testVideoPreviewPlane(videoUrl = DEFAULT_TEST_VIDEO_URL) {
       return enableCameraVideoProjection('camera_0', { videoUrl });
     },
     loadBim,

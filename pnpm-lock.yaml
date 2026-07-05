@@ -22,6 +22,9 @@ importers:
       '@playcanvas/splat-transform':
         specifier: ^2.6.0
         version: 2.7.0(playcanvas@2.20.0)
+      hls.js:
+        specifier: ^1.6.16
+        version: 1.6.16
       playcanvas:
         specifier: ^2.19.7
         version: 2.20.0
@@ -588,6 +591,9 @@ packages:
 
   grapheme-splitter@1.0.4:
     resolution: {integrity: sha512-bzh50DW9kTPM00T8y4o8vQg89Di9oLJVLW/KaOGIXJWP/iqCN6WKYkbNOF04vFLJhwcpYUh9ydh/+5vpOqV4YQ==}
+
+  hls.js@1.6.16:
+    resolution: {integrity: sha512-VSIRpLfRwlAAdGL4wiTucx2ScRipo0ed1FBatWkyt832jC4CReKstga6yIhYVwGu9LOBjuX9wzmRMeQdBJtzEA==}
 
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
@@ -1320,6 +1326,8 @@ snapshots:
   graceful-fs@4.2.11: {}
 
   grapheme-splitter@1.0.4: {}
+
+  hls.js@1.6.16: {}
 
   ieee754@1.2.1:
     optional: true

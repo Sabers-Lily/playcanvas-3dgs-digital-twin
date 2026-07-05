@@ -1,4 +1,5 @@
 import * as pc from 'playcanvas';
+import Hls from 'hls.js';
 
 const PROJECTION_MODES = {
   CAMERA_FRUSTUM: 'cameraFrustum',
@@ -12,6 +13,10 @@ function resolveVideoUrl(videoAsset, videoUrl) {
   }
 
   return videoUrl || '';
+}
+
+function isHlsUrl(videoUrl) {
+  return typeof videoUrl === 'string' && videoUrl.toLowerCase().includes('.m3u8');
 }
 
 function resolveShaderLanguage(app) {
@@ -171,6 +176,7 @@ export class GsplatMp4ProjectorAdapter {
     mainCameraEntity,
     projectorEntity,
     videoAsset = null,
+    videoElement = null,
     videoUrl = '',
     mode = PROJECTION_MODES.CAMERA_FRUSTUM,
     projectorFov = 45,
@@ -191,6 +197,7 @@ export class GsplatMp4ProjectorAdapter {
     this.mainCameraEntity = mainCameraEntity;
     this.projectorEntity = projectorEntity;
     this.videoAsset = videoAsset;
+    this.externalVideoElement = videoElement;
     this.videoUrl = videoUrl;
     this.mode = mode;
     this.projectorFov = projectorFov;
@@ -208,11 +215,15 @@ export class GsplatMp4ProjectorAdapter {
 
     this.videoElement = null;
     this.videoTexture = null;
+    this.hls = null;
     this.sceneMaterial = null;
     this.shaderLanguage = null;
     this.shaderChunks = null;
     this._originalGsplatModifyPS = undefined;
     this._chunkInstalled = false;
+    this._ownsVideoElement = false;
+    this._hasLoggedTextureBind = false;
+    this._hasLoggedTextureUpload = false;
 
     this.mainProj = new pc.Mat4();
     this.mainView = new pc.Mat4();
@@ -242,9 +253,27 @@ export class GsplatMp4ProjectorAdapter {
   }
 
   initialize() {
-    this.createVideoElement(resolveVideoUrl(this.videoAsset, this.videoUrl));
+    this.bindVideoElement(this.externalVideoElement);
+    if (!this.videoElement) {
+      this.createVideoElement(resolveVideoUrl(this.videoAsset, this.videoUrl));
+    }
     this.createVideoTexture();
     this.installGsplatMaterialChunk();
+  }
+
+  bindVideoElement(videoElement = null) {
+    this.externalVideoElement = videoElement ?? null;
+
+    if (videoElement) {
+      this.destroyHls();
+      this.videoElement = videoElement;
+      this._ownsVideoElement = false;
+      this._hasLoggedTextureBind = false;
+      this._hasLoggedTextureUpload = false;
+      return true;
+    }
+
+    return false;
   }
 
   createVideoElement(resolvedVideoUrl) {
@@ -258,10 +287,6 @@ export class GsplatMp4ProjectorAdapter {
     video.style.display = 'none';
     document.body.appendChild(video);
 
-    if (resolvedVideoUrl) {
-      video.src = resolvedVideoUrl;
-    }
-
     video.addEventListener('canplay', () => {
       const playPromise = video.play();
       if (playPromise?.catch) {
@@ -273,14 +298,61 @@ export class GsplatMp4ProjectorAdapter {
       }
     });
 
-    if (resolvedVideoUrl) {
-      video.load();
+    this.videoElement = video;
+    this._ownsVideoElement = true;
+    this.attachVideoSource(resolvedVideoUrl);
+  }
+
+  attachVideoSource(resolvedVideoUrl) {
+    if (!this.videoElement) {
+      return;
     }
 
-    this.videoElement = video;
+    this.destroyHls();
+    this.videoElement.pause();
+    this.videoElement.removeAttribute('src');
+
+    if (!resolvedVideoUrl) {
+      this.videoElement.load();
+      return;
+    }
+
+    if (isHlsUrl(resolvedVideoUrl)) {
+      if (this.videoElement.canPlayType('application/vnd.apple.mpegurl')) {
+        this.videoElement.src = resolvedVideoUrl;
+        this.videoElement.load();
+        return;
+      }
+
+      if (Hls.isSupported()) {
+        this.hls = new Hls({
+          lowLatencyMode: true,
+          liveSyncDuration: 2,
+          maxLiveSyncPlaybackRate: 1.5
+        });
+        this.hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data?.fatal) {
+            console.warn('[GsplatMp4ProjectorAdapter] HLS fatal error:', data);
+          }
+        });
+        this.hls.loadSource(resolvedVideoUrl);
+        this.hls.attachMedia(this.videoElement);
+        return;
+      }
+
+      throw new Error('HLS is not supported in this browser');
+    }
+
+    this.videoElement.src = resolvedVideoUrl;
+    this.videoElement.load();
   }
 
   createVideoTexture() {
+    if (this.videoTexture) {
+      this.videoTexture.destroy();
+      this.videoTexture = null;
+    }
+
     this.videoTexture = new pc.Texture(this.app.graphicsDevice, {
       name: 'GsplatMp4ProjectorAdapterVideo',
       format: pc.PIXELFORMAT_R8_G8_B8_A8,
@@ -293,7 +365,29 @@ export class GsplatMp4ProjectorAdapter {
 
     if (this.videoElement) {
       this.videoTexture.setSource(this.videoElement);
+      this.logTextureBind();
     }
+  }
+
+  logTextureBind() {
+    if (this._hasLoggedTextureBind || !this.videoElement) {
+      return;
+    }
+
+    this._hasLoggedTextureBind = true;
+    console.log('[PlayCanvasVideoTexture] bind', {
+      width: this.videoElement.videoWidth ?? 0,
+      height: this.videoElement.videoHeight ?? 0
+    });
+  }
+
+  destroyHls() {
+    if (!this.hls) {
+      return;
+    }
+
+    this.hls.destroy();
+    this.hls = null;
   }
 
   installGsplatMaterialChunk() {
@@ -626,7 +720,14 @@ export class GsplatMp4ProjectorAdapter {
     }
 
     if (this.videoElement && this.videoTexture && this.videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      this.logTextureBind();
       this.videoTexture.upload();
+      if (!this._hasLoggedTextureUpload) {
+        this._hasLoggedTextureUpload = true;
+        console.log('[PlayCanvasVideoTexture] upload started', {
+          currentTime: this.videoElement.currentTime ?? 0
+        });
+      }
     }
 
     this.updateMatrices();
@@ -729,7 +830,11 @@ export class GsplatMp4ProjectorAdapter {
       this.shaderChunks = null;
       this.gsplatEntity = options.gsplatEntity;
     }
+    const hasExternalVideoElementPatch = 'videoElement' in options;
     if ('videoAsset' in options) this.videoAsset = options.videoAsset;
+    if (hasExternalVideoElementPatch) {
+      this.bindVideoElement(options.videoElement);
+    }
     if ('videoUrl' in options) this.videoUrl = options.videoUrl;
     if ('mode' in options) this.mode = options.mode || PROJECTION_MODES.CAMERA_FRUSTUM;
     if ('projectorFov' in options) this.projectorFov = options.projectorFov;
@@ -757,12 +862,26 @@ export class GsplatMp4ProjectorAdapter {
       });
     }
 
-    if ('videoAsset' in options || 'videoUrl' in options) {
+    if (hasExternalVideoElementPatch && this.videoTexture && this.videoElement) {
+      this.videoTexture.setSource(this.videoElement);
+      this.logTextureBind();
+    }
+
+    if ((('videoAsset' in options || 'videoUrl' in options) && !this.externalVideoElement) || (!this.videoTexture && this.videoElement)) {
       this.reloadVideo();
     }
   }
 
   reloadVideo() {
+    if (this.externalVideoElement) {
+      this.videoElement = this.externalVideoElement;
+      if (this.videoTexture) {
+        this.videoTexture.setSource(this.videoElement);
+        this.logTextureBind();
+      }
+      return;
+    }
+
     const resolvedVideoUrl = resolveVideoUrl(this.videoAsset, this.videoUrl);
     if (!this.videoElement) {
       this.createVideoElement(resolvedVideoUrl);
@@ -770,9 +889,7 @@ export class GsplatMp4ProjectorAdapter {
       return;
     }
 
-    this.videoElement.pause();
-    this.videoElement.src = resolvedVideoUrl;
-    this.videoElement.load();
+    this.attachVideoSource(resolvedVideoUrl);
   }
 
   restoreShaderChunk() {
@@ -801,16 +918,20 @@ export class GsplatMp4ProjectorAdapter {
     }
 
     if (this.videoTexture) {
+      console.log('[PlayCanvasVideoTexture] dispose');
       this.videoTexture.destroy();
       this.videoTexture = null;
     }
 
-    if (this.videoElement) {
+    if (this.videoElement && this._ownsVideoElement) {
+      this.destroyHls();
       this.videoElement.pause();
       this.videoElement.removeAttribute('src');
       this.videoElement.load();
       this.videoElement.remove();
-      this.videoElement = null;
     }
+
+    this.videoElement = null;
+    this.externalVideoElement = null;
   }
 }

@@ -36,6 +36,8 @@ apps/api/data/assets/*.json
 !apps/api/storage/.gitkeep
 !apps/api/storage/assets/.gitkeep
 !apps/api/data/assets/.gitkeep
+apps/api/.cache/**
+!apps/api/.cache/.gitkeep
 
 # Large local 3D assets
 apps/web/public/assets/*.sog
