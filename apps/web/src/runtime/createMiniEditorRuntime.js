@@ -23,6 +23,7 @@ const OBJECT_IDS = {
 };
 
 const BUILDING_ENVELOPE_TYPE = 'buildingEnvelope';
+const BUILDING_ENVELOPE_OVERLAY_LAYER_NAME = 'BuildingEnvelopeOverlay';
 const ACTIVE_EDIT_MODE = {
   QUAD_VIDEO_PROJECTION: 'quadVideoProjection',
   BUILDING_ENVELOPE_DRAWING: 'buildingEnvelopeDrawing'
@@ -312,7 +313,7 @@ function formatEnvelopePointList(points) {
 }
 
 function createDefaultEnvelopeMetadata(partial = {}) {
-  const height = Math.max(0, readNumberValue(partial.height, 0));
+  const height = Math.max(0, readNumberValue(partial.height, 5));
   return {
     points: cloneEnvelopePoints(partial.points),
     closed: partial.closed ?? true,
@@ -324,7 +325,8 @@ function createDefaultEnvelopeMetadata(partial = {}) {
     fillVisible: partial.fillVisible ?? true,
     topVisible: height > 0 ? (partial.topVisible ?? true) : false,
     sideVisible: height > 0 ? (partial.sideVisible ?? true) : false,
-    upAxis: partial.upAxis ?? 'z'
+    upAxis: partial.upAxis ?? 'z',
+    displayMode: partial.displayMode === 'depth' ? 'depth' : 'overlay'
   };
 }
 
@@ -362,11 +364,23 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   app.scene.gammaCorrection = pc.GAMMA_SRGB;
   app.scene.toneMapping = pc.TONEMAP_ACES;
 
+  let buildingEnvelopeOverlayLayer = app.scene.layers?.getLayerByName?.(BUILDING_ENVELOPE_OVERLAY_LAYER_NAME) ?? null;
+  if (!buildingEnvelopeOverlayLayer) {
+    buildingEnvelopeOverlayLayer = new pc.Layer({
+      name: BUILDING_ENVELOPE_OVERLAY_LAYER_NAME,
+      enabled: true
+    });
+    app.scene.layers.push(buildingEnvelopeOverlayLayer);
+  }
+
   const camera = new pc.Entity('Camera');
   camera.addComponent('camera', {
     clearColor: new pc.Color(0.08, 0.09, 0.12),
     fov: 60
   });
+  if (!camera.camera.layers.includes(buildingEnvelopeOverlayLayer.id)) {
+    camera.camera.layers = [...camera.camera.layers, buildingEnvelopeOverlayLayer.id];
+  }
   app.root.addChild(camera);
 
   const light = new pc.Entity('DirectionalLight');
@@ -395,6 +409,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   });
   const buildingEnvelopeController = new BuildingEnvelopeController({
     app,
+    visibleLayerIds: [buildingEnvelopeOverlayLayer.id],
+    pickingLayerIds: [pc.LAYERID_WORLD],
     onLog(message) {
       updateStatusMessage(message);
     }
@@ -1369,9 +1385,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     const envelope = createDefaultEnvelopeMetadata({
       ...options,
       points,
-      height: 0,
-      topVisible: false,
-      sideVisible: false
+      height: options.height ?? options.metadata?.envelope?.height ?? 5,
+      topVisible: options.metadata?.envelope?.topVisible ?? true,
+      sideVisible: options.metadata?.envelope?.sideVisible ?? true,
+      displayMode: options.metadata?.envelope?.displayMode ?? 'overlay'
     });
 
     if (envelope.points.length < 3) {
@@ -1421,8 +1438,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
     selectionManager.select(id);
     selectableObjectController.refreshObjectVisualState(id);
-    console.log(`[BuildingEnvelope] created: objectId=${id} height=0`);
-    updateStatusMessage(`[BuildingEnvelope] created: objectId=${id} height=0`);
+    console.log(`[BuildingEnvelope] created: objectId=${id} height=${envelope.height}`);
+    updateStatusMessage(`[BuildingEnvelope] created: objectId=${id} height=${envelope.height}`);
     return { id, entity };
   }
 
@@ -1800,9 +1817,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         envelope: {
           ...envelope,
           ...options.metadata?.envelope,
-          height: 0,
-          topVisible: false,
-          sideVisible: false
+          height: options.metadata?.envelope?.height ?? 5,
+          topVisible: options.metadata?.envelope?.topVisible ?? true,
+          sideVisible: options.metadata?.envelope?.sideVisible ?? true,
+          displayMode: options.metadata?.envelope?.displayMode ?? 'overlay'
         }
       },
       color: envelope.color,
@@ -3590,6 +3608,9 @@ function setVideoProjectionMode(cameraId, mode) {
         return;
       case 'set-building-envelope-opacity':
         setBuildingEnvelopeOpacity(payload?.objectId ?? selectionManager.getSelectedId(), payload?.opacity);
+        return;
+      case 'set-building-envelope-display-mode':
+        updateBuildingEnvelope(payload?.objectId ?? selectionManager.getSelectedId(), { displayMode: payload?.displayMode });
         return;
       case 'set-building-envelope-outline-visible':
         setBuildingEnvelopeOutlineVisible(payload?.objectId ?? selectionManager.getSelectedId(), payload?.visible);

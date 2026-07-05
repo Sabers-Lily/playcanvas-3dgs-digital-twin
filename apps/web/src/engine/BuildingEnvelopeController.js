@@ -3,9 +3,10 @@ import { BuildingEnvelopeMeshBuilder } from './BuildingEnvelopeMeshBuilder.js';
 
 const DEFAULTS = {
   minPoints: 3,
-  initialHeight: 0,
+  initialHeight: 5,
   defaultColor: '#00A3FF',
-  defaultOpacity: 0.25
+  defaultOpacity: 0.25,
+  defaultDisplayMode: 'overlay'
 };
 const VISUAL_STATE = {
   normal: {
@@ -61,7 +62,8 @@ function cloneEnvelope(envelope = {}) {
     fillVisible: envelope.fillVisible ?? true,
     topVisible: envelope.topVisible ?? true,
     sideVisible: envelope.sideVisible ?? true,
-    upAxis: envelope.upAxis ?? 'z'
+    upAxis: envelope.upAxis ?? 'z',
+    displayMode: envelope.displayMode === 'depth' ? 'depth' : DEFAULTS.defaultDisplayMode
   };
 }
 
@@ -146,7 +148,7 @@ function createSelectedVertexMaterial() {
   return material;
 }
 
-function createSelectedVertexMarkerEntity(name, localPosition, material) {
+function createSelectedVertexMarkerEntity(name, localPosition, material, layers = null) {
   const entity = new pc.Entity(name);
   entity.addComponent('render', {
     type: 'sphere',
@@ -154,16 +156,25 @@ function createSelectedVertexMarkerEntity(name, localPosition, material) {
     receiveShadows: false,
     material
   });
+  if (Array.isArray(layers) && layers.length) {
+    entity.render.layers = [...layers];
+  }
   entity.setLocalScale(0.22, 0.22, 0.22);
   entity.setLocalPosition(localPosition);
   return entity;
 }
 
 export class BuildingEnvelopeController {
-  constructor({ app, onLog }) {
+  constructor({ app, onLog, visibleLayerIds = null, pickingLayerIds = null }) {
     this.app = app;
     this.onLog = typeof onLog === 'function' ? onLog : null;
-    this.meshBuilder = new BuildingEnvelopeMeshBuilder({ app });
+    this.visibleLayerIds = Array.isArray(visibleLayerIds) && visibleLayerIds.length ? [...visibleLayerIds] : null;
+    this.pickingLayerIds = Array.isArray(pickingLayerIds) && pickingLayerIds.length ? [...pickingLayerIds] : null;
+    this.meshBuilder = new BuildingEnvelopeMeshBuilder({
+      app,
+      visibleLayerIds: this.visibleLayerIds,
+      pickingLayerIds: this.pickingLayerIds
+    });
     this.draftPointMaterial = createDraftPointMaterial();
     this.draftLineMaterial = createDraftLineMaterial();
     this.selectedVertexMaterial = createSelectedVertexMaterial();
@@ -385,7 +396,8 @@ export class BuildingEnvelopeController {
           (Number.parseFloat(y) || 0) - center.y,
           (Number.parseFloat(z) || 0) - center.z
         ),
-        this.selectedVertexMaterial
+        this.selectedVertexMaterial,
+        this.visibleLayerIds
       );
       entity.addChild(marker);
     });
@@ -451,10 +463,11 @@ export class BuildingEnvelopeController {
       opacity: snapshot.options.opacity,
       outlineVisible: true,
       fillVisible: true,
-      topVisible: false,
-      sideVisible: false,
+      topVisible: true,
+      sideVisible: true,
       baseOffset: 0,
-      upAxis: 'z'
+      upAxis: 'z',
+      displayMode: DEFAULTS.defaultDisplayMode
     });
   }
 

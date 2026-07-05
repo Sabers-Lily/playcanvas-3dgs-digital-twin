@@ -68,13 +68,14 @@ const patrolForm = reactive({
   loop: false
 });
 const buildingEnvelopeForm = reactive({
-  height: 0,
+  height: 5,
   color: '#00A3FF',
   opacity: 0.25,
   outlineVisible: true,
   fillVisible: true,
-  topVisible: false,
-  sideVisible: false
+  topVisible: true,
+  sideVisible: true,
+  displayMode: 'overlay'
 });
 
 const TRANSFORM_EDITABLE_TYPES = new Set([
@@ -191,8 +192,9 @@ function resetBuildingEnvelopeForm() {
   buildingEnvelopeForm.opacity = envelope?.opacity ?? 0.25;
   buildingEnvelopeForm.outlineVisible = envelope?.outlineVisible ?? true;
   buildingEnvelopeForm.fillVisible = envelope?.fillVisible ?? true;
-  buildingEnvelopeForm.topVisible = envelope?.topVisible ?? false;
-  buildingEnvelopeForm.sideVisible = envelope?.sideVisible ?? false;
+  buildingEnvelopeForm.topVisible = envelope?.topVisible ?? true;
+  buildingEnvelopeForm.sideVisible = envelope?.sideVisible ?? true;
+  buildingEnvelopeForm.displayMode = envelope?.displayMode === 'depth' ? 'depth' : 'overlay';
 }
 
 watch(
@@ -344,6 +346,13 @@ function emitBuildingEnvelopeToggle(action, value) {
   emit('action', action, {
     objectId: props.selection?.id,
     visible: value
+  });
+}
+
+function emitBuildingEnvelopeDisplayMode() {
+  emit('action', 'set-building-envelope-display-mode', {
+    objectId: props.selection?.id,
+    displayMode: buildingEnvelopeForm.displayMode
   });
 }
 </script>
@@ -524,6 +533,7 @@ function emitBuildingEnvelopeToggle(action, value) {
               <label class="inspector-field"><span>高度</span><input v-model.number="buildingEnvelopeForm.height" type="number" min="0" step="0.1" @change="emitBuildingEnvelopeHeight" /></label>
               <label class="inspector-field"><span>颜色</span><input v-model="buildingEnvelopeForm.color" type="color" @change="emitBuildingEnvelopeColor" /></label>
               <label class="inspector-field"><span>透明度</span><input v-model.number="buildingEnvelopeForm.opacity" type="number" min="0" max="1" step="0.05" @change="emitBuildingEnvelopeOpacity" /></label>
+              <label class="inspector-field"><span>显示模式</span><select v-model="buildingEnvelopeForm.displayMode" @change="emitBuildingEnvelopeDisplayMode"><option value="overlay">overlay</option><option value="depth">depth</option></select></label>
               <label class="inspector-field"><span>显示边框</span><input v-model="buildingEnvelopeForm.outlineVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-outline-visible', buildingEnvelopeForm.outlineVisible)" /></label>
               <label class="inspector-field"><span>显示底面</span><input v-model="buildingEnvelopeForm.fillVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-fill-visible', buildingEnvelopeForm.fillVisible)" /></label>
               <label class="inspector-field"><span>显示顶面</span><input v-model="buildingEnvelopeForm.topVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-top-visible', buildingEnvelopeForm.topVisible)" /></label>

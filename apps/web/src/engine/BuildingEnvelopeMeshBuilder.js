@@ -49,7 +49,8 @@ function createStandardMaterial({
   color,
   opacity,
   emissiveScale = 0.08,
-  depthTest = true
+  depthTest = true,
+  depthWrite = false
 }) {
   const material = new pc.StandardMaterial();
   const resolvedColor = colorFromHex(color);
@@ -58,8 +59,22 @@ function createStandardMaterial({
   material.emissive = resolvedColor.clone().mulScalar(emissiveScale);
   material.opacity = resolvedOpacity;
   material.blendType = resolvedOpacity < 1 ? pc.BLEND_NORMAL : pc.BLEND_NONE;
-  material.depthWrite = resolvedOpacity >= 1;
+  material.depthWrite = depthWrite;
   material.depthTest = depthTest;
+  material.cull = pc.CULLFACE_NONE;
+  material.useLighting = false;
+  material.update();
+  return material;
+}
+
+function createPickingMaterial() {
+  const material = new pc.StandardMaterial();
+  material.diffuse = new pc.Color(0, 0, 0);
+  material.emissive = new pc.Color(0, 0, 0);
+  material.opacity = 0.001;
+  material.blendType = pc.BLEND_NORMAL;
+  material.depthWrite = false;
+  material.depthTest = false;
   material.cull = pc.CULLFACE_NONE;
   material.useLighting = false;
   material.update();
@@ -143,7 +158,6 @@ function applyMaterialStyle(material, { color, opacity, emissiveScale = 0.08 }) 
   material.emissive = resolvedColor.clone().mulScalar(emissiveScale);
   material.opacity = resolvedOpacity;
   material.blendType = resolvedOpacity < 1 ? pc.BLEND_NORMAL : pc.BLEND_NONE;
-  material.depthWrite = resolvedOpacity >= 1;
   material.update();
 }
 
@@ -186,6 +200,16 @@ function createBoxEntity(name, material) {
     material
   });
   return entity;
+}
+
+function applyRenderLayers(entity, layers) {
+  if (!entity || !Array.isArray(layers) || !layers.length) {
+    return;
+  }
+
+  if (entity.render) {
+    entity.render.layers = [...layers];
+  }
 }
 
 function createSegmentEntity(name, start, end, thickness, material, upAxis = 'z') {
@@ -379,6 +403,15 @@ function createMeshEntity(app, name, positions, indices, material) {
   return entity;
 }
 
+function ensureContainerEntity(parent, name) {
+  let child = parent.children?.find?.((entry) => entry.name === name) ?? null;
+  if (!child) {
+    child = new pc.Entity(name);
+    parent.addChild(child);
+  }
+  return child;
+}
+
 function pushVec3(positions, vec) {
   positions.push(vec.x, vec.y, vec.z);
 }
@@ -411,8 +444,10 @@ function createSideFaceEntity(app, name, baseStart, baseEnd, topStart, topEnd, m
 }
 
 export class BuildingEnvelopeMeshBuilder {
-  constructor({ app }) {
+  constructor({ app, visibleLayerIds = null, pickingLayerIds = null }) {
     this.app = app;
+    this.visibleLayerIds = Array.isArray(visibleLayerIds) && visibleLayerIds.length ? [...visibleLayerIds] : null;
+    this.pickingLayerIds = Array.isArray(pickingLayerIds) && pickingLayerIds.length ? [...pickingLayerIds] : null;
   }
 
   createEnvelopeEntity(name, envelope) {
@@ -483,6 +518,10 @@ export class BuildingEnvelopeMeshBuilder {
 
     destroyChildren(entity);
 
+    const fillEntity = ensureContainerEntity(entity, '__building_envelope_fill');
+    const outlineEntity = ensureContainerEntity(entity, '__building_envelope_outline');
+    const pickingEntity = ensureContainerEntity(entity, '__building_envelope_pick');
+
     const points = Array.isArray(envelope.points) ? envelope.points : [];
     if (points.length < 3) {
       console.warn('[BuildingEnvelopeMeshBuilder] rebuild skipped: insufficient points', {
@@ -503,23 +542,28 @@ export class BuildingEnvelopeMeshBuilder {
     const upAxisVector = getUpAxisVector(upAxis);
     const color = normalizeHexColor(envelope.color);
     const opacity = clampOpacity(envelope.opacity);
+    const displayMode = envelope.displayMode === 'depth' ? 'depth' : 'overlay';
     const localBasePoints = localizePoints(points, center);
     const localTopPoints = localBasePoints.map((point) => point.clone().add(upAxisVector.clone().mulScalar(height)));
     const topTriangles = triangulatePolygon(localTopPoints, upAxis);
 
     const outlineMaterial = createStandardMaterial({
-      color: '#ff3b30',
+      color: NORMAL_OUTLINE_COLOR,
       opacity: 0.95,
       emissiveScale: 0.4,
-      depthTest: true
+      depthTest: false,
+      depthWrite: false
     });
 
     const fillMaterial = createStandardMaterial({
       color,
       opacity,
       emissiveScale: 0.12,
-      depthTest: true
+      depthTest: displayMode === 'depth',
+      depthWrite: false
     });
+
+    const pickingMaterial = createPickingMaterial();
 
     for (let index = 0; index < localBasePoints.length; index += 1) {
       const nextIndex = (index + 1) % localBasePoints.length;
@@ -538,7 +582,8 @@ export class BuildingEnvelopeMeshBuilder {
           upAxis
         );
         if (bottomLine) {
-          entity.addChild(bottomLine);
+          applyRenderLayers(bottomLine, this.visibleLayerIds);
+          outlineEntity.addChild(bottomLine);
         }
       }
 
@@ -552,8 +597,21 @@ export class BuildingEnvelopeMeshBuilder {
             upAxis
           );
           if (footprintRibbon) {
-            entity.addChild(footprintRibbon);
+            applyRenderLayers(footprintRibbon, this.visibleLayerIds);
+            fillEntity.addChild(footprintRibbon);
           }
+        }
+
+        const pickingRibbon = createFootprintRibbonEntity(
+          `__building_envelope_pick_footprint_${index}`,
+          baseStart,
+          baseEnd,
+          pickingMaterial,
+          upAxis
+        );
+        if (pickingRibbon) {
+          applyRenderLayers(pickingRibbon, this.pickingLayerIds);
+          pickingEntity.addChild(pickingRibbon);
         }
         continue;
       }
@@ -568,7 +626,8 @@ export class BuildingEnvelopeMeshBuilder {
           upAxis
         );
         if (topLine) {
-          entity.addChild(topLine);
+          applyRenderLayers(topLine, this.visibleLayerIds);
+          outlineEntity.addChild(topLine);
         }
       }
 
@@ -582,7 +641,8 @@ export class BuildingEnvelopeMeshBuilder {
           upAxis
         );
         if (verticalLine) {
-          entity.addChild(verticalLine);
+          applyRenderLayers(verticalLine, this.visibleLayerIds);
+          outlineEntity.addChild(verticalLine);
         }
       }
 
@@ -597,7 +657,24 @@ export class BuildingEnvelopeMeshBuilder {
           fillMaterial
         );
         if (sideFace) {
-          entity.addChild(sideFace);
+          applyRenderLayers(sideFace, this.visibleLayerIds);
+          fillEntity.addChild(sideFace);
+        }
+      }
+
+      if (envelope.sideVisible !== false) {
+        const pickingSideFace = createSideFaceEntity(
+          this.app,
+          `__building_envelope_pick_side_${index}`,
+          baseStart,
+          baseEnd,
+          topStart,
+          topEnd,
+          pickingMaterial
+        );
+        if (pickingSideFace) {
+          applyRenderLayers(pickingSideFace, this.pickingLayerIds);
+          pickingEntity.addChild(pickingSideFace);
         }
       }
     }
@@ -611,7 +688,22 @@ export class BuildingEnvelopeMeshBuilder {
         fillMaterial
       );
       if (topFace) {
-        entity.addChild(topFace);
+        applyRenderLayers(topFace, this.visibleLayerIds);
+        fillEntity.addChild(topFace);
+      }
+    }
+
+    if (height > MIN_FACE_HEIGHT && envelope.topVisible !== false) {
+      const pickingTopFace = createTopFaceEntity(
+        this.app,
+        '__building_envelope_pick_top',
+        localTopPoints,
+        topTriangles,
+        pickingMaterial
+      );
+      if (pickingTopFace) {
+        applyRenderLayers(pickingTopFace, this.pickingLayerIds);
+        pickingEntity.addChild(pickingTopFace);
       }
     }
 
