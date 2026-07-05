@@ -7,6 +7,24 @@ const DEFAULTS = {
   defaultColor: '#00A3FF',
   defaultOpacity: 0.25
 };
+const VISUAL_STATE = {
+  normal: {
+    hovered: false,
+    selected: false,
+    showVertices: false
+  },
+  hovered: {
+    hovered: true,
+    selected: false,
+    showVertices: false
+  },
+  selected: {
+    hovered: false,
+    selected: true,
+    showVertices: true
+  }
+};
+const VERTEX_MARKER_PREFIX = '__building_envelope_selected_vertex_';
 
 function readNumber(value, fallback = 0) {
   const next = Number.parseFloat(value);
@@ -107,6 +125,40 @@ function createDraftSegmentEntity(name, start, end, material, thickness = 0.06) 
   return entity;
 }
 
+function destroyMatchingChildren(entity, prefix) {
+  if (!entity || typeof prefix !== 'string') {
+    return;
+  }
+
+  [...entity.children]
+    .filter((child) => typeof child.name === 'string' && child.name.startsWith(prefix))
+    .forEach((child) => child.destroy());
+}
+
+function createSelectedVertexMaterial() {
+  const material = new pc.StandardMaterial();
+  material.diffuse = new pc.Color(0.32, 0.66, 1);
+  material.emissive = new pc.Color(0.16, 0.34, 0.78);
+  material.opacity = 0.98;
+  material.cull = pc.CULLFACE_NONE;
+  material.useLighting = false;
+  material.update();
+  return material;
+}
+
+function createSelectedVertexMarkerEntity(name, localPosition, material) {
+  const entity = new pc.Entity(name);
+  entity.addComponent('render', {
+    type: 'sphere',
+    castShadows: false,
+    receiveShadows: false,
+    material
+  });
+  entity.setLocalScale(0.22, 0.22, 0.22);
+  entity.setLocalPosition(localPosition);
+  return entity;
+}
+
 export class BuildingEnvelopeController {
   constructor({ app, onLog }) {
     this.app = app;
@@ -114,6 +166,8 @@ export class BuildingEnvelopeController {
     this.meshBuilder = new BuildingEnvelopeMeshBuilder({ app });
     this.draftPointMaterial = createDraftPointMaterial();
     this.draftLineMaterial = createDraftLineMaterial();
+    this.selectedVertexMaterial = createSelectedVertexMaterial();
+    this.visualStateByObjectId = new Map();
     this.state = {
       active: false,
       mode: 'idle',
@@ -306,6 +360,80 @@ export class BuildingEnvelopeController {
 
     this.meshBuilder.applyEnvelopeVisualState(entity, cloneEnvelope(metadata), interactionState);
     return true;
+  }
+
+  showSelectedVertexMarkers(objectId, entity, metadata) {
+    if (!entity || !metadata) {
+      return false;
+    }
+
+    const alreadyVisible = entity.children.some((child) => typeof child.name === 'string' && child.name.startsWith(VERTEX_MARKER_PREFIX));
+    if (alreadyVisible) {
+      return false;
+    }
+
+    destroyMatchingChildren(entity, VERTEX_MARKER_PREFIX);
+    const envelope = cloneEnvelope(metadata);
+    const center = entity.getLocalPosition().clone();
+
+    envelope.points.forEach((point, index) => {
+      const [x, y, z] = point.position;
+      const marker = createSelectedVertexMarkerEntity(
+        `${VERTEX_MARKER_PREFIX}${index}`,
+        new pc.Vec3(
+          (Number.parseFloat(x) || 0) - center.x,
+          (Number.parseFloat(y) || 0) - center.y,
+          (Number.parseFloat(z) || 0) - center.z
+        ),
+        this.selectedVertexMaterial
+      );
+      entity.addChild(marker);
+    });
+
+    this.log(`[BuildingEnvelope] selected vertex markers shown: objectId=${objectId}`);
+    return true;
+  }
+
+  hideSelectedVertexMarkers(objectId, entity) {
+    if (!entity) {
+      return false;
+    }
+
+    const hadMarkers = entity.children.some((child) => typeof child.name === 'string' && child.name.startsWith(VERTEX_MARKER_PREFIX));
+    destroyMatchingChildren(entity, VERTEX_MARKER_PREFIX);
+    if (hadMarkers) {
+      this.log(`[BuildingEnvelope] selected vertex markers hidden: objectId=${objectId}`);
+    }
+    return hadMarkers;
+  }
+
+  setVisualState(objectId, entity, metadata, state = 'normal') {
+    const nextState = VISUAL_STATE[state] ?? VISUAL_STATE.normal;
+    const previousState = this.visualStateByObjectId.get(objectId) ?? 'normal';
+    this.bindEnvelopeEntity(entity, objectId, metadata);
+    if (previousState === state) {
+      if (nextState.showVertices) {
+        this.showSelectedVertexMarkers(objectId, entity, metadata);
+      } else {
+        this.hideSelectedVertexMarkers(objectId, entity);
+      }
+      return false;
+    }
+
+    const changed = this.updateEnvelopeInteractionState(entity, metadata, {
+      hovered: nextState.hovered,
+      selected: nextState.selected
+    });
+    this.visualStateByObjectId.set(objectId, state);
+
+    if (nextState.showVertices) {
+      this.showSelectedVertexMarkers(objectId, entity, metadata);
+    } else {
+      this.hideSelectedVertexMarkers(objectId, entity);
+    }
+
+    this.log(`[BuildingEnvelope] visual state changed: objectId=${objectId} state=${state}`);
+    return changed;
   }
 
   buildEnvelopeFromSnapshot() {

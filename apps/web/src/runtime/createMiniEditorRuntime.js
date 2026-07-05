@@ -9,6 +9,7 @@ import { GsplatPointPicker } from '../engine/GsplatPointPicker.js';
 import { MarkerManager } from '../engine/MarkerManager.js';
 import { PickingController } from '../engine/PickingController.js';
 import { RobotDogPatrolController } from '../engine/RobotDogPatrolController.js';
+import { SelectableObjectController } from '../engine/SelectableObjectController.js';
 import { SceneObjectManager } from '../editor/SceneObjectManager.js';
 import { SelectionManager } from '../editor/SelectionManager.js';
 import { UI_FLAGS } from '../config/uiFlags.js';
@@ -396,6 +397,14 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     app,
     onLog(message) {
       updateStatusMessage(message);
+    }
+  });
+  const selectableObjectController = new SelectableObjectController({
+    sceneObjectManager,
+    selectionManager,
+    buildingEnvelopeController,
+    log(message) {
+      console.log(message);
     }
   });
   const sceneRenderPicker = new pc.Picker(app, 1, 1);
@@ -1336,56 +1345,16 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return sceneObject;
   }
 
-  let hoveredBuildingEnvelopeId = null;
-  let lastSelectedBuildingEnvelopeId = null;
-
   function syncBuildingEnvelopeVisualState(objectId) {
-    const sceneObject = getBuildingEnvelopeObject(objectId);
-    if (!sceneObject?.entity) {
-      return false;
-    }
-
-    buildingEnvelopeController.bindEnvelopeEntity(
-      sceneObject.entity,
-      objectId,
-      sceneObject.metadata?.envelope
-    );
-    return buildingEnvelopeController.updateEnvelopeInteractionState(
-      sceneObject.entity,
-      sceneObject.metadata?.envelope,
-      {
-        hovered: hoveredBuildingEnvelopeId === objectId,
-        selected: selectionManager.getSelectedId() === objectId
-      }
-    );
+    return selectableObjectController.refreshObjectVisualState(objectId);
   }
 
   function setBuildingEnvelopeHover(objectId) {
-    const nextHoveredId = objectId && getBuildingEnvelopeObject(objectId) ? objectId : null;
-    if (hoveredBuildingEnvelopeId === nextHoveredId) {
-      canvas.style.cursor = nextHoveredId ? 'pointer' : 'default';
-      return false;
-    }
-
-    const previousHoveredId = hoveredBuildingEnvelopeId;
-    hoveredBuildingEnvelopeId = nextHoveredId;
-    canvas.style.cursor = nextHoveredId ? 'pointer' : 'default';
-
-    if (previousHoveredId) {
-      syncBuildingEnvelopeVisualState(previousHoveredId);
-      console.log(`[BuildingEnvelope] hover left: objectId=${previousHoveredId}`);
-    }
-
-    if (nextHoveredId) {
-      syncBuildingEnvelopeVisualState(nextHoveredId);
-      console.log(`[BuildingEnvelope] hover entered: objectId=${nextHoveredId}`);
-    }
-
-    return true;
+    return selectableObjectController.setHoveredObject(objectId);
   }
 
   function clearBuildingEnvelopeHover() {
-    return setBuildingEnvelopeHover(null);
+    return selectableObjectController.clearHoveredObject();
   }
 
   function isSelectableHoverBlocked() {
@@ -1451,7 +1420,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       childCount: entity.children.length
     });
     selectionManager.select(id);
-    syncBuildingEnvelopeVisualState(id);
+    selectableObjectController.refreshObjectVisualState(id);
     console.log(`[BuildingEnvelope] created: objectId=${id} height=0`);
     updateStatusMessage(`[BuildingEnvelope] created: objectId=${id} height=0`);
     return { id, entity };
@@ -1481,7 +1450,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         envelope: nextEnvelope
       }
     });
-    syncBuildingEnvelopeVisualState(objectId);
+    selectableObjectController.refreshObjectVisualState(objectId);
     console.log(`[BuildingEnvelope] updated: objectId=${objectId}`);
     updateStatusMessage(`[BuildingEnvelope] updated: objectId=${objectId}`);
     return true;
@@ -1542,7 +1511,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
-    if (hoveredBuildingEnvelopeId === objectId) {
+    if (selectableObjectController.getHoveredObjectId() === objectId) {
       clearBuildingEnvelopeHover();
     }
 
@@ -3794,23 +3763,15 @@ function setVideoProjectionMode(cameraId, mode) {
       }
       clearBuildingEnvelopeHover();
       selectionManager.select(hit.objectId);
-      if (hit.object?.type === BUILDING_ENVELOPE_TYPE) {
-        console.log(`[BuildingEnvelope] selected: objectId=${hit.objectId}`);
-      }
       updateStatusMessage(`Selected object: ${hit.object.displayName ?? hit.object.name}`);
     },
     onBusinessObjectHover: (hit) => {
       canvas.style.cursor = 'pointer';
-      if (hit.object?.type === BUILDING_ENVELOPE_TYPE) {
-        setBuildingEnvelopeHover(hit.objectId);
-        return;
-      }
-
-      clearBuildingEnvelopeHover();
+      selectableObjectController.setHoveredObject(hit.objectId);
     },
     onBusinessObjectHoverClear: () => {
       canvas.style.cursor = 'default';
-      clearBuildingEnvelopeHover();
+      selectableObjectController.clearHoveredObject();
     },
     onGsplatPick: (hit) => {
       if (buildingEnvelopeController.isDrawing()) {
@@ -3910,32 +3871,17 @@ function setVideoProjectionMode(cameraId, mode) {
   });
 
   sceneObjectManager.subscribe(() => {
-    if (hoveredBuildingEnvelopeId && !getBuildingEnvelopeObject(hoveredBuildingEnvelopeId)) {
-      hoveredBuildingEnvelopeId = null;
+    const hoveredObjectId = selectableObjectController.getHoveredObjectId();
+    if (hoveredObjectId && !sceneObjectManager.getObject(hoveredObjectId)) {
+      selectableObjectController.clearHoveredObject();
       canvas.style.cursor = 'default';
     }
-    if (hoveredBuildingEnvelopeId) {
-      syncBuildingEnvelopeVisualState(hoveredBuildingEnvelopeId);
-    }
-    const selectedEnvelopeId = selectionManager.getSelectedId();
-    if (selectedEnvelopeId) {
-      syncBuildingEnvelopeVisualState(selectedEnvelopeId);
-    }
+    selectableObjectController.refreshAllVisualStates();
     emitState();
   });
 
   selectionManager.subscribe((selectionId, selected) => {
-    const previousSelectedEnvelopeId = lastSelectedBuildingEnvelopeId;
-    lastSelectedBuildingEnvelopeId = selected?.type === BUILDING_ENVELOPE_TYPE ? selectionId : null;
-
-    if (previousSelectedEnvelopeId && previousSelectedEnvelopeId !== lastSelectedBuildingEnvelopeId) {
-      syncBuildingEnvelopeVisualState(previousSelectedEnvelopeId);
-      console.log('[BuildingEnvelope] selection cleared');
-    }
-
-    if (lastSelectedBuildingEnvelopeId) {
-      syncBuildingEnvelopeVisualState(lastSelectedBuildingEnvelopeId);
-    }
+    selectableObjectController.handleSelectionChanged(selectionId);
 
     if (selected) {
       pushLog(`Selected: ${selected.name}`);
