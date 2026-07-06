@@ -28,6 +28,7 @@ export class ObjectTransformDragController {
     selectionManager,
     cameraController,
     pickBusinessObject,
+    transformGizmo,
     applyTransformToObject,
     shouldBlock,
     canDragObject,
@@ -39,6 +40,7 @@ export class ObjectTransformDragController {
     this.selectionManager = selectionManager;
     this.cameraController = cameraController;
     this.pickBusinessObject = pickBusinessObject || null;
+    this.transformGizmo = transformGizmo || null;
     this.applyTransformToObject = applyTransformToObject || null;
     this.shouldBlock = shouldBlock || null;
     this.canDragObject = canDragObject || null;
@@ -64,7 +66,7 @@ export class ObjectTransformDragController {
       return true;
     }
 
-    return Boolean(originalEvent.shiftKey || originalEvent.altKey || originalEvent.ctrlKey || originalEvent.metaKey);
+    return Boolean(originalEvent.altKey || originalEvent.ctrlKey || originalEvent.metaKey);
   }
 
   _getCanvasPoint(originalEvent) {
@@ -93,8 +95,23 @@ export class ObjectTransformDragController {
     };
   }
 
-  _createDragPlane(position) {
+  _createGroundDragPlane(position) {
     const normal = new pc.Vec3(0, 1, 0);
+    return {
+      normal,
+      constant: -normal.dot(position)
+    };
+  }
+
+  _createHeightDragPlane(position) {
+    const worldUp = new pc.Vec3(0, 1, 0);
+    const cameraRight = this.cameraEntity.right.clone().normalize();
+    const normal = new pc.Vec3().cross(cameraRight, worldUp).normalize();
+
+    if (normal.lengthSq() <= 1e-6) {
+      return this._createGroundDragPlane(position);
+    }
+
     return {
       normal,
       constant: -normal.dot(position)
@@ -124,7 +141,18 @@ export class ObjectTransformDragController {
       return;
     }
 
-    const hit = this.pickBusinessObject?.(point.x, point.y) ?? null;
+    const gizmoPart = this.transformGizmo?.pick?.(point.x, point.y) ?? 'none';
+    const hit = gizmoPart === 'y-axis'
+      ? (() => {
+          const selectedObject = this.selectionManager.getSelectedObject();
+          return selectedObject
+            ? {
+                objectId: selectedObject.id,
+                object: selectedObject
+              }
+            : null;
+        })()
+      : (this.pickBusinessObject?.(point.x, point.y) ?? null);
     if (!hit?.object?.entity || !this.canDragObject?.(hit.object)) {
       this.pendingSession = null;
       return;
@@ -132,7 +160,12 @@ export class ObjectTransformDragController {
 
     const objectPosition = hit.object.entity.getPosition().clone();
     const ray = this._getRay(point.x, point.y);
-    const dragPlane = this._createDragPlane(objectPosition);
+    const mode = originalEvent.shiftKey || gizmoPart === 'y-axis'
+      ? 'height-y'
+      : 'ground-xz';
+    const dragPlane = mode === 'height-y'
+      ? this._createHeightDragPlane(objectPosition)
+      : this._createGroundDragPlane(objectPosition);
     const startHitPoint = intersectRayWithPlane(ray, dragPlane);
 
     if (!startHitPoint) {
@@ -145,6 +178,7 @@ export class ObjectTransformDragController {
     this.pendingSession = {
       objectId: hit.objectId,
       objectName: hit.object.displayName ?? hit.object.name ?? hit.objectId,
+      mode,
       pointerDown: point,
       dragPlane,
       startHitPoint,
@@ -171,7 +205,7 @@ export class ObjectTransformDragController {
 
       this.pendingSession.active = true;
       this.canvas.style.cursor = 'grabbing';
-      console.log(`[ObjectTransformDrag] start ${this.pendingSession.objectId}`);
+      console.log(`[ObjectTransformDrag] start ${this.pendingSession.mode} ${this.pendingSession.objectId}`);
     }
 
     const ray = this._getRay(point.x, point.y);
@@ -181,12 +215,19 @@ export class ObjectTransformDragController {
     }
 
     const delta = currentHitPoint.clone().sub(this.pendingSession.startHitPoint);
-    const nextPosition = this.pendingSession.startObjectPosition.clone().add(delta);
     const object = this.selectionManager.getSelectedObject();
 
     if (!object || object.id !== this.pendingSession.objectId) {
       this._clearSession();
       return;
+    }
+
+    const nextPosition = this.pendingSession.startObjectPosition.clone();
+    if (this.pendingSession.mode === 'height-y') {
+      nextPosition.y = this.pendingSession.startObjectPosition.y + delta.dot(new pc.Vec3(0, 1, 0));
+    } else {
+      nextPosition.add(delta);
+      nextPosition.y = this.pendingSession.startObjectPosition.y;
     }
 
     const nextTransform = {
@@ -214,7 +255,9 @@ export class ObjectTransformDragController {
     const selectedObject = this.selectionManager.getSelectedObject();
     const position = selectedObject?.transform?.position ?? null;
     console.log(`[ObjectTransformDrag] end ${completedSession.objectId}`, {
-      position
+      x: position?.[0] ?? null,
+      y: position?.[1] ?? null,
+      z: position?.[2] ?? null
     });
 
     if (this.canvas?.style) {

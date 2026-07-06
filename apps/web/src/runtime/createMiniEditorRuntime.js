@@ -13,6 +13,7 @@ import { ObjectTransformDragController } from '../engine/ObjectTransformDragCont
 import { PickingController } from '../engine/PickingController.js';
 import { RobotDogPatrolController } from '../engine/RobotDogPatrolController.js';
 import { SelectableObjectController } from '../engine/SelectableObjectController.js';
+import { TransformGizmo } from '../engine/TransformGizmo.js';
 import { SceneObjectManager } from '../editor/SceneObjectManager.js';
 import { SelectionManager } from '../editor/SelectionManager.js';
 import { UI_FLAGS } from '../config/uiFlags.js';
@@ -483,6 +484,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     app,
     camera,
     canvas
+  });
+  const transformGizmo = new TransformGizmo({
+    app,
+    cameraEntity: camera
   });
 
   cameraController.setDefaultFocus({
@@ -1635,6 +1640,16 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       || getEditingQuadProjectionCameraId()
       || robotDogPatrolController.getEditingRobotDogId()
     );
+  }
+
+  function refreshTransformGizmo() {
+    const selectedObject = selectionManager.getSelectedObject();
+    if (!selectedObject || isSelectableHoverBlocked() || !isDraggableObject(selectedObject)) {
+      transformGizmo.hide();
+      return;
+    }
+
+    transformGizmo.showFor(selectedObject);
   }
 
   function createBuildingEnvelopeFromPoints(points, options = {}) {
@@ -4085,6 +4100,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     selectionManager,
     cameraController,
     pickBusinessObject,
+    transformGizmo,
     applyTransformToObject,
     shouldBlock: () => Boolean(
       buildingEnvelopeController.isDrawing()
@@ -4250,10 +4266,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       robotDogPatrolController.stopRouteEditing(editingRobotDogId, { silent: true });
     }
     if (!selectionId) {
+      refreshTransformGizmo();
       closeContextMenu();
       emitState();
       return;
     }
+    refreshTransformGizmo();
     emitState();
   });
 
@@ -4349,6 +4367,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     activeMp4Projector?.update();
     robotDogPatrolController.update(dt ?? 0);
+    refreshTransformGizmo();
+    transformGizmo.update();
 
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     if (shouldEmitCameraRuntimeState && now - lastCameraVideoRuntimeEmitAt > 250) {

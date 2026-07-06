@@ -573,6 +573,10 @@ onBeforeUnmount(() => {
                 <button v-if="isGsplat" class="button-secondary" type="button" @click="emit('action', 'focus-map')">聚焦地图</button>
                 <button v-if="isGsplat" class="button-secondary" type="button" @click="emit('action', 'reload-base')">重载 Base SOG</button>
               </div>
+
+              <div class="inspector-note">
+                拖拽对象：沿 XZ 平面移动。Shift + 拖拽：调整 Y 高度。拖拽竖直箭头：只调整 Y 高度。
+              </div>
             </div>
           </InspectorSection>
 
