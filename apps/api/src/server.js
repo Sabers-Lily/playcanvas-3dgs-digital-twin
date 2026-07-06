@@ -4,8 +4,10 @@ import { API_VERSION, API_SERVICE_NAME, API_STAGE, createApiSuccess, createApiEr
 import { handleScenesRoute } from './routes/scenes.js';
 import { handleAssetsRoute } from './routes/assets.js';
 import { handleCamerasRoute } from './routes/cameras.js';
+import { handleProjectsRoute } from './routes/projects.js';
 import { initializeAssetStore } from './store/assetStore.js';
 import { initializeSceneStore } from './store/memoryStore.js';
+import { ensureProjectDataDir } from './store/fileProjectStore.js';
 import { RtspHlsService } from './services/rtspHlsService.js';
 
 const PORT = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -98,6 +100,7 @@ function handleStreamRequest(request, response, pathname) {
 async function startServer() {
   await initializeSceneStore();
   await initializeAssetStore();
+  await ensureProjectDataDir();
 
   const server = http.createServer(async (request, response) => {
     try {
@@ -122,6 +125,10 @@ async function startServer() {
         return;
       }
 
+      if (await handleProjectsRoute(request, response, url.pathname, writeJson)) {
+        return;
+      }
+
       if (await handleAssetsRoute(request, response, url.pathname, writeJson, writeBuffer)) {
         return;
       }
@@ -143,6 +150,16 @@ async function startServer() {
 
       if (error?.code === 'SCENE_FILE_WRITE_FAILED') {
         writeJson(response, 500, createApiError('SCENE_FILE_WRITE_FAILED', 'Failed to write scene file'));
+        return;
+      }
+
+      if (error?.code === 'PROJECT_FILE_INVALID') {
+        writeJson(response, 500, createApiError('PROJECT_FILE_INVALID', 'Project file is invalid JSON'));
+        return;
+      }
+
+      if (error?.code === 'PROJECT_FILE_WRITE_FAILED') {
+        writeJson(response, 500, createApiError('PROJECT_FILE_WRITE_FAILED', 'Failed to write project file'));
         return;
       }
 

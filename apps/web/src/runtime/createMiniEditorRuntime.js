@@ -1277,6 +1277,36 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     };
   }
 
+  function getCameraViewState() {
+    const next = cameraController.getState();
+    return {
+      target: [next.target.x, next.target.y, next.target.z],
+      distance: next.distance,
+      yaw: next.yaw,
+      pitch: next.pitch
+    };
+  }
+
+  function restoreCameraView(view = null) {
+    if (!view || typeof view !== 'object') {
+      cameraController.reset();
+      emitState();
+      return false;
+    }
+
+    const target = Array.isArray(view.target) ? view.target : [0, 0, 0];
+    const distance = Number.isFinite(Number(view.distance)) ? Number(view.distance) : 80;
+    const yaw = Number.isFinite(Number(view.yaw)) ? Number(view.yaw) : 0;
+    const pitch = Number.isFinite(Number(view.pitch)) ? Number(view.pitch) : 45;
+
+    cameraController.focus(new pc.Vec3(target[0] ?? 0, target[1] ?? 0, target[2] ?? 0), distance, {
+      yaw,
+      pitch
+    });
+    emitState();
+    return true;
+  }
+
   function flushState() {
     const snapshot = buildRuntimeSnapshot();
     listeners.forEach((listener) => listener(snapshot));
@@ -3071,9 +3101,26 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     emitState();
   }
 
+  function clearSceneForProjectOpen() {
+    clearRestorableSceneObjects();
+    if (markerManager.marker) {
+      markerManager.clearMarker();
+    }
+    cancelPlacementMode();
+    cancelBuildingEnvelopeDrawing();
+    stopRobotDogRouteEditing();
+    commitTransformEdit({
+      skipStatusMessage: true
+    });
+    cameraController.reset();
+    updateStatusMessage('Project scene cleared');
+    return true;
+  }
+
   async function restoreSceneObjectsFromPayload(objects) {
     const payloadList = Array.isArray(objects) ? objects.map(normalizeRestoredObjectPayload) : [];
     let restoredCount = 0;
+    const missingAssets = [];
 
     pushLog('Restore scene started');
     clearRestorableSceneObjects();
@@ -3133,13 +3180,19 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       } catch (error) {
         const message = `Restore failed for ${payload.displayName}: ${describeError(error)}`;
         console.warn('[Restore] object restore failed:', payload.displayName, error);
+        if (payload.metadata?.assetId || payload.metadata?.url || payload.metadata?.sourceName) {
+          missingAssets.push({
+            assetId: payload.metadata?.assetId ?? null,
+            fileName: payload.metadata?.sourceName || payload.displayName || payload.metadata?.url || payload.id
+          });
+        }
         pushLog(message);
       }
     }
 
     pushLog(`Restore scene ok: ${restoredCount} objects`);
     updateStatusMessage(`Restore scene ok: ${restoredCount} objects`);
-    return { restoredCount };
+    return { restoredCount, missingAssets };
   }
 
   function getEntityWorldAabb(entity) {
@@ -3933,6 +3986,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return false;
   }
 
+  function selectSceneObject(objectId) {
+    return handleHierarchySelect(objectId);
+  }
+
   function handleContextMenuAction(action) {
     const objectId = state.contextMenu.objectId;
     if (!objectId) {
@@ -4606,6 +4663,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     getSnapshot() {
       return buildRuntimeSnapshot();
     },
+    getCameraViewState,
+    restoreCameraView,
+    clearSceneForProjectOpen,
+    selectSceneObject,
     getSceneObjectSnapshots() {
       return sceneObjectManager.getObjectSnapshots();
     },

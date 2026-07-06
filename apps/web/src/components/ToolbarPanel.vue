@@ -5,6 +5,10 @@ defineProps({
   statusMessage: {
     type: String,
     default: 'Ready'
+  },
+  projectName: {
+    type: String,
+    default: '未命名工程'
   }
 });
 
@@ -129,7 +133,11 @@ function run(command, payload = null) {
       </div>
 
       <div class="toolbar-divider" />
-      <button class="button-primary" type="button" @click="run('save-scene')">保存</button>
+      <button class="button-secondary" type="button" @click="run('open-project')">打开工程</button>
+      <button class="button-secondary" type="button" @click="run('import-project')">导入工程</button>
+      <button class="button-secondary" type="button" @click="run('export-project')">导出工程</button>
+      <button class="button-primary" type="button" @click="run('save-project')">保存</button>
+      <span class="toolbar-project-name">{{ projectName }}</span>
     </div>
   </header>
 </template>

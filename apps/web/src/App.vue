@@ -17,6 +17,11 @@ import {
   uploadAsset
 } from './api/assetApi.js';
 import {
+  fetchProject,
+  listProjects,
+  saveProject
+} from './api/projectApi.js';
+import {
   createSceneObject,
   deleteSceneObject,
   fetchScene,
@@ -25,13 +30,21 @@ import {
   replaceSceneObjects
 } from './api/sceneApi.js';
 import { isSyncableSceneObject, sceneObjectToApiPayload } from './api/sceneObjectMapper.js';
+import { collectCurrentProject } from './features/project/collectCurrentProject.js';
+import { openProject } from './features/project/openProject.js';
+import { exportProjectFile, importProjectFile } from './features/project/projectFileImportExport.js';
 
 const viewportPanelRef = ref(null);
 const canvasRef = ref(null);
 const assetUploadInputRef = ref(null);
+const projectImportInputRef = ref(null);
 const runtime = ref(null);
 const bottomDrawerMode = ref(null);
 const MAX_UI_LOGS = 100;
+const currentProjectId = ref(null);
+const currentProjectName = ref('未命名工程');
+const currentProjectCreatedAt = ref(null);
+const projectList = ref([]);
 
 const snapshot = reactive({
   objects: [],
@@ -351,6 +364,166 @@ async function refreshAssets() {
   } catch (error) {
     console.warn('[API] fetch assets failed:', error);
     prependUiLog(`Assets API: failed - ${error.message}`);
+  }
+}
+
+async function refreshProjectList() {
+  try {
+    projectList.value = await listProjects();
+  } catch (error) {
+    console.warn('[Project] list failed:', error);
+    prependUiLog(`Project list failed: ${error.message}`);
+  }
+}
+
+function createLocalProjectId() {
+  return `project_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getRuntimeProjectSnapshot() {
+  return {
+    cameraView: runtime.value?.getCameraViewState?.() ?? null
+  };
+}
+
+async function saveCurrentProject() {
+  const nextProjectName = window.prompt('请输入工程名称', currentProjectName.value || '未命名工程')?.trim();
+  if (!nextProjectName) {
+    prependUiLog('Project save cancelled');
+    return;
+  }
+
+  const project = collectCurrentProject({
+    snapshot,
+    runtimeSnapshot: getRuntimeProjectSnapshot(),
+    projectId: currentProjectId.value ?? createLocalProjectId(),
+    projectName: nextProjectName,
+    createdAt: currentProjectCreatedAt.value ?? new Date().toISOString()
+  });
+
+  try {
+    const result = await saveProject(project);
+    currentProjectId.value = result.projectId;
+    currentProjectName.value = nextProjectName;
+    currentProjectCreatedAt.value = project.createdAt;
+    prependUiLog(`Project saved: ${nextProjectName}`);
+    console.log('[Project] save ok:', result.projectId, result.path);
+    await refreshProjectList();
+  } catch (error) {
+    prependUiLog(`Project save failed: ${error.message}`);
+    console.warn('[Project] save failed:', error);
+  }
+}
+
+async function openProjectById(projectId) {
+  if (!projectId) {
+    return;
+  }
+
+  try {
+    const payload = await fetchProject(projectId);
+    const result = await openProject({
+      project: payload.project,
+      runtime: runtime.value,
+      refreshAssets
+    });
+
+    currentProjectId.value = result.project.projectId;
+    currentProjectName.value = result.project.name;
+    currentProjectCreatedAt.value = result.project.createdAt;
+
+    if (result.missingAssets.length) {
+      prependUiLog(`Project opened with missing assets: ${result.missingAssets.map((asset) => asset.fileName).join(', ')}`);
+    } else {
+      prependUiLog(`Project opened: ${result.project.name}`);
+    }
+    console.log('[Project] open ok:', result.project.projectId);
+  } catch (error) {
+    prependUiLog(`Project open failed: ${error.message}`);
+    console.warn('[Project] open failed:', error);
+  }
+}
+
+async function chooseProjectToOpen() {
+  await refreshProjectList();
+  if (!projectList.value.length) {
+    prependUiLog('No saved projects');
+    return;
+  }
+
+  const promptText = projectList.value
+    .map((project, index) => `${index + 1}. ${project.name} (${project.projectId})`)
+    .join('\n');
+  const answer = window.prompt(`请选择要打开的工程，输入序号或 projectId：\n${promptText}`, projectList.value[0]?.projectId || '');
+
+  if (!answer) {
+    prependUiLog('Project open cancelled');
+    return;
+  }
+
+  const selectedIndex = Number.parseInt(answer, 10);
+  const selectedProject = Number.isInteger(selectedIndex) && selectedIndex >= 1 && selectedIndex <= projectList.value.length
+    ? projectList.value[selectedIndex - 1]
+    : projectList.value.find((project) => project.projectId === answer.trim());
+
+  if (!selectedProject) {
+    prependUiLog('Project not found');
+    return;
+  }
+
+  await openProjectById(selectedProject.projectId);
+}
+
+function exportCurrentProject() {
+  try {
+    const project = collectCurrentProject({
+      snapshot,
+      runtimeSnapshot: getRuntimeProjectSnapshot(),
+      projectId: currentProjectId.value ?? createLocalProjectId(),
+      projectName: currentProjectName.value || '未命名工程',
+      createdAt: currentProjectCreatedAt.value ?? new Date().toISOString()
+    });
+    exportProjectFile(project);
+    prependUiLog(`Project exported: ${project.name}`);
+  } catch (error) {
+    prependUiLog(`Project export failed: ${error.message}`);
+    console.warn('[Project] export failed:', error);
+  }
+}
+
+function chooseImportProjectFile() {
+  projectImportInputRef.value?.click();
+}
+
+async function onChooseImportProjectFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = '';
+
+  if (!file) {
+    return;
+  }
+
+  try {
+    const project = await importProjectFile(file);
+    const result = await openProject({
+      project,
+      runtime: runtime.value,
+      refreshAssets
+    });
+
+    currentProjectId.value = result.project.projectId;
+    currentProjectName.value = result.project.name;
+    currentProjectCreatedAt.value = result.project.createdAt;
+
+    if (result.missingAssets.length) {
+      prependUiLog(`Project imported with missing assets: ${result.missingAssets.map((asset) => asset.fileName).join(', ')}`);
+    } else {
+      prependUiLog(`Project imported: ${result.project.name}`);
+    }
+    console.log('[Project] import ok:', result.project.projectId);
+  } catch (error) {
+    prependUiLog(`Project import failed: ${error.message}`);
+    console.warn('[Project] import failed:', error);
   }
 }
 
@@ -705,6 +878,18 @@ function onToolbarCommand({ command, payload }) {
     case 'save-scene':
       syncCurrentScene();
       return;
+    case 'save-project':
+      saveCurrentProject();
+      return;
+    case 'open-project':
+      chooseProjectToOpen();
+      return;
+    case 'export-project':
+      exportCurrentProject();
+      return;
+    case 'import-project':
+      chooseImportProjectFile();
+      return;
     default:
       return;
   }
@@ -777,6 +962,7 @@ onMounted(() => {
   unsubscribe = nextRuntime.subscribe(syncSnapshot);
   checkApiHealth();
   refreshAssets();
+  refreshProjectList();
 });
 
 onBeforeUnmount(() => {
@@ -790,6 +976,7 @@ onBeforeUnmount(() => {
   <div class="app-shell" :class="{ 'has-bottom-drawer': Boolean(bottomDrawerMode) }">
     <ToolbarPanel
       :status-message="snapshot.statusMessage"
+      :project-name="currentProjectName"
       @command="onToolbarCommand"
     />
 
@@ -800,6 +987,14 @@ onBeforeUnmount(() => {
       type="file"
       accept=".sog,.glb,.gltf,.obj,.ply"
       @change="onChooseUploadAsset"
+    />
+    <input
+      id="project-import-input"
+      ref="projectImportInputRef"
+      class="visually-hidden-input"
+      type="file"
+      accept=".json,.3dgsproj"
+      @change="onChooseImportProjectFile"
     />
 
     <main class="editor-layout">
