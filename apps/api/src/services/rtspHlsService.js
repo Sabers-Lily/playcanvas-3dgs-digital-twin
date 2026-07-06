@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dirname, '..', '..');
 const HLS_CACHE_ROOT = resolve(API_ROOT, '.cache', 'hls');
 const FFMPEG_BIN = process.env.FFMPEG_PATH || process.env.FFMPEG_BIN || 'ffmpeg';
-const FFMPEG_HLS_MODE = process.env.FFMPEG_HLS_MODE === 'transcode' ? 'transcode' : 'copy';
+const FFMPEG_HLS_MODE = process.env.FFMPEG_HLS_MODE === 'copy' ? 'copy' : 'transcode';
 
 function createServiceError(code, message) {
   const error = new Error(message);
@@ -43,6 +43,8 @@ function isFfmpegErrorText(text) {
 function buildFfmpegArgs(cameraSource, outputFile) {
   const args = [
     '-rtsp_transport', 'tcp',
+    '-fflags', 'nobuffer',
+    '-flags', 'low_delay',
     '-i', cameraSource.rtspUrl,
     '-an'
   ];
@@ -53,7 +55,11 @@ function buildFfmpegArgs(cameraSource, outputFile) {
       '-preset', 'veryfast',
       '-tune', 'zerolatency',
       '-profile:v', 'baseline',
-      '-pix_fmt', 'yuv420p'
+      '-pix_fmt', 'yuv420p',
+      '-g', '30',
+      '-keyint_min', '30',
+      '-sc_threshold', '0',
+      '-force_key_frames', 'expr:gte(t,n_forced*1)'
     );
   } else {
     args.push('-c:v', 'copy');
@@ -63,7 +69,7 @@ function buildFfmpegArgs(cameraSource, outputFile) {
     '-f', 'hls',
     '-hls_time', '1',
     '-hls_list_size', '5',
-    '-hls_flags', 'delete_segments+append_list',
+    '-hls_flags', 'delete_segments+append_list+independent_segments+omit_endlist',
     outputFile
   );
 
