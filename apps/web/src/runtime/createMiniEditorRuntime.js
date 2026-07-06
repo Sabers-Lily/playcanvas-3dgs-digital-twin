@@ -415,8 +415,56 @@ function createDefaultVideoProjectionMetadata(id, partial = {}) {
   };
 }
 
+function getWebglSupportStatus(canvas) {
+  const probeCanvas = canvas ?? document.createElement('canvas');
+
+  try {
+    const webgl2 = probeCanvas.getContext('webgl2');
+    if (webgl2) {
+      return {
+        supported: true,
+        hasWebgl2: true,
+        hasWebgl1: true
+      };
+    }
+  } catch (_error) {
+    // Ignore probing errors and fall through to detailed result below.
+  }
+
+  let hasWebgl1 = false;
+  try {
+    hasWebgl1 = Boolean(
+      probeCanvas.getContext('webgl')
+      || probeCanvas.getContext('experimental-webgl')
+    );
+  } catch (_error) {
+    hasWebgl1 = false;
+  }
+
+  return {
+    supported: false,
+    hasWebgl2: false,
+    hasWebgl1
+  };
+}
+
 export function createMiniEditorRuntime({ canvas, viewportElement }) {
+  const webglStatus = getWebglSupportStatus(canvas);
+  if (!webglStatus.supported) {
+    const error = new Error(
+      webglStatus.hasWebgl1
+        ? 'WebGL2 is required but not available in this browser.'
+        : 'WebGL is not available in this browser.'
+    );
+    error.code = webglStatus.hasWebgl1 ? 'WEBGL2_UNSUPPORTED' : 'WEBGL_UNSUPPORTED';
+    throw error;
+  }
+
   const app = new pc.Application(canvas, {
+    graphicsDeviceOptions: {
+      // Some browsers/drivers hit invalid MSAA resolve errors during gsplat rendering and picker passes.
+      antialias: false
+    },
     mouse: new pc.Mouse(document.body),
     touch: new pc.TouchDevice(document.body)
   });
@@ -426,8 +474,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   app.start();
 
   app.scene.ambientLight = new pc.Color(0.25, 0.25, 0.25);
-  app.scene.gammaCorrection = pc.GAMMA_SRGB;
-  app.scene.toneMapping = pc.TONEMAP_ACES;
 
   let buildingEnvelopeOverlayLayer = app.scene.layers?.getLayerByName?.(BUILDING_ENVELOPE_OVERLAY_LAYER_NAME) ?? null;
   if (!buildingEnvelopeOverlayLayer) {
@@ -441,7 +487,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   const camera = new pc.Entity('Camera');
   camera.addComponent('camera', {
     clearColor: new pc.Color(0.08, 0.09, 0.12),
-    fov: 60
+    fov: 60,
+    gammaCorrection: pc.GAMMA_SRGB,
+    toneMapping: pc.TONEMAP_ACES
   });
   if (!camera.camera.layers.includes(buildingEnvelopeOverlayLayer.id)) {
     camera.camera.layers = [...camera.camera.layers, buildingEnvelopeOverlayLayer.id];

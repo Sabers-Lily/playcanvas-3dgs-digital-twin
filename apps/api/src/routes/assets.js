@@ -231,6 +231,35 @@ export async function handleAssetsRoute(request, response, pathname, writeJson, 
   const assetId = decodeURIComponent(match[1]);
   const isFileRoute = pathname.endsWith('/file');
 
+  if (request.method === 'HEAD' && isFileRoute) {
+    try {
+      const file = await getAssetFile(assetId);
+      if (!file) {
+        writeJson(response, 404, assetNotFound());
+        return true;
+      }
+
+      response.writeHead(200, {
+        'Content-Length': file.buffer.length,
+        'Content-Type': file.record.mimeType
+      });
+      response.end();
+      return true;
+    } catch (error) {
+      if (error?.code === 'ASSET_FILE_NOT_FOUND') {
+        writeJson(response, 404, assetFileNotFound());
+        return true;
+      }
+
+      if (error?.code === 'ASSET_INDEX_INVALID') {
+        writeJson(response, 500, assetIndexInvalid());
+        return true;
+      }
+
+      throw error;
+    }
+  }
+
   if (request.method === 'GET' && isFileRoute) {
     try {
       const file = await getAssetFile(assetId);

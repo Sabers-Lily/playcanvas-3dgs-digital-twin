@@ -954,15 +954,31 @@ function closeContextMenu() {
 }
 
 onMounted(() => {
-  const nextRuntime = createMiniEditorRuntime({
-    canvas: canvasRef.value,
-    viewportElement: viewportPanelRef.value?.viewportBody ?? viewportPanelRef.value?.$el
-  });
-  runtime.value = nextRuntime;
-  unsubscribe = nextRuntime.subscribe(syncSnapshot);
-  checkApiHealth();
-  refreshAssets();
-  refreshProjectList();
+  try {
+    const nextRuntime = createMiniEditorRuntime({
+      canvas: canvasRef.value,
+      viewportElement: viewportPanelRef.value?.viewportBody ?? viewportPanelRef.value?.$el
+    });
+    runtime.value = nextRuntime;
+    unsubscribe = nextRuntime.subscribe(syncSnapshot);
+    checkApiHealth();
+    refreshAssets();
+    refreshProjectList();
+  } catch (error) {
+    const errorCode = error?.code ?? 'RUNTIME_INIT_FAILED';
+    const message = errorCode === 'WEBGL2_UNSUPPORTED'
+      ? '当前浏览器不支持 WebGL2，编辑器无法启动。请使用启用硬件加速的 Chrome / Edge，或检查浏览器 WebGL 设置。'
+      : (errorCode === 'WEBGL_UNSUPPORTED'
+        ? '当前浏览器未启用 WebGL，编辑器无法启动。请检查浏览器硬件加速或图形设置。'
+        : `编辑器启动失败：${error?.message || errorCode}`);
+
+    snapshot.statusMessage = message;
+    snapshot.logs = [message, ...snapshot.logs].slice(0, MAX_UI_LOGS);
+    console.error('[MiniEditor] runtime init failed:', {
+      code: errorCode,
+      error
+    });
+  }
 });
 
 onBeforeUnmount(() => {
@@ -1013,6 +1029,13 @@ onBeforeUnmount(() => {
       <section class="main-area">
         <ViewportPanel ref="viewportPanelRef" :status-summary="snapshot.statusSummary">
           <EditModeBanner :mode="currentEditBanner" @action="onBannerAction" />
+          <div
+            v-if="!runtime && snapshot.statusMessage !== 'Ready'"
+            class="inspector-empty"
+            style="position:absolute; inset:24px; z-index:2; display:flex; align-items:center; justify-content:center; text-align:center; pointer-events:none;"
+          >
+            {{ snapshot.statusMessage }}
+          </div>
           <canvas id="app-canvas" ref="canvasRef"></canvas>
         </ViewportPanel>
 
