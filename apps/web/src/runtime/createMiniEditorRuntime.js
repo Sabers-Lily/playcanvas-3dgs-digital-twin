@@ -671,6 +671,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     getVideoElement(cameraObjectId, projection = {}) {
       const runtime = ensureCameraVideoRuntime(cameraObjectId, projection);
       return runtime?.getVideoElement?.() ?? null;
+    },
+    getGsplatEntity() {
+      return currentGsplatEntity;
+    },
+    getMainCameraEntity() {
+      return camera;
+    },
+    getProjectorEntity(cameraObjectId) {
+      return sceneObjectManager.getObject(cameraObjectId)?.entity ?? null;
     }
   });
 
@@ -2654,6 +2663,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
             }
           });
           updateDebugHandles();
+          syncAllCameraProjectionInstances();
 
           destroySplatState(previousState);
 
@@ -3578,6 +3588,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       currentAsset = null;
       currentBlobUrl = null;
       updateDebugHandles();
+      syncAllCameraProjectionInstances();
     }
 
     if (object.id === OBJECT_IDS.bim) {
