@@ -68,8 +68,6 @@ export class CameraProjectionManager {
       enabled: false,
       mode: 'quadOverlay',
       anchors: [],
-      entity: null,
-      meshInstance: null,
       material: null,
       videoTexture: null,
       projector: null,
@@ -205,10 +203,6 @@ export class CameraProjectionManager {
       return false;
     }
 
-    if (instance.entity) {
-      instance.entity.enabled = false;
-    }
-
     instance.enabled = false;
     if (options.updateState) {
       instance.anchors = cloneAnchors(options.anchors ?? instance.anchors);
@@ -245,8 +239,6 @@ export class CameraProjectionManager {
 
     instance.enabled = false;
     instance.anchors = [];
-    instance.entity = null;
-    instance.meshInstance = null;
     instance.material = null;
     instance.videoTexture = null;
     instance.videoElement = null;
@@ -315,8 +307,6 @@ export class CameraProjectionManager {
       return null;
     }
 
-    instance.entity = instance.projectorEntity ?? null;
-    instance.meshInstance = null;
     instance.material = instance.projector.sceneMaterial ?? null;
     instance.videoTexture = instance.projector.videoTexture ?? null;
     return instance;
