@@ -9,6 +9,7 @@ import { CameraVideoRuntime } from '../engine/CameraVideoRuntime.js';
 import { GsplatMp4ProjectorAdapter } from '../engine/GsplatMp4ProjectorAdapter.js';
 import { GsplatPointPicker } from '../engine/GsplatPointPicker.js';
 import { MarkerManager } from '../engine/MarkerManager.js';
+import { ObjectTransformDragController } from '../engine/ObjectTransformDragController.js';
 import { PickingController } from '../engine/PickingController.js';
 import { RobotDogPatrolController } from '../engine/RobotDogPatrolController.js';
 import { SelectableObjectController } from '../engine/SelectableObjectController.js';
@@ -42,6 +43,32 @@ const TRANSFORM_EDITABLE_TYPES = new Set([
   'robotDog',
   'cameraDevice',
   BUILDING_ENVELOPE_TYPE,
+  'device',
+  'hotspot',
+  'annotation',
+  'routePoint'
+]);
+const PICKABLE_OBJECT_TYPES = new Set([
+  'bim-proxy',
+  'model',
+  'glb',
+  'empty',
+  'robot',
+  'robotDog',
+  'cameraDevice',
+  BUILDING_ENVELOPE_TYPE,
+  'device',
+  'hotspot',
+  'annotation',
+  'routePoint'
+]);
+const DRAGGABLE_OBJECT_TYPES = new Set([
+  'model',
+  'glb',
+  'empty',
+  'robot',
+  'robotDog',
+  'cameraDevice',
   'device',
   'hotspot',
   'annotation',
@@ -256,6 +283,18 @@ function createBusinessObjectId(type, prefix = 'object') {
 
 function formatPointLog(point) {
   return `x=${point.x.toFixed(2)}, y=${point.y.toFixed(2)}, z=${point.z.toFixed(2)}`;
+}
+
+function isPickableObjectType(type) {
+  return PICKABLE_OBJECT_TYPES.has(type);
+}
+
+function isDraggableObject(object) {
+  if (!object?.entity || object.protected || !object.visible) {
+    return false;
+  }
+
+  return DRAGGABLE_OBJECT_TYPES.has(object.type);
 }
 
 function clonePatrolMetadata(patrol) {
@@ -1090,6 +1129,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     const [rx, ry, rz] = nextTransform.rotation;
     const [sx, sy, sz] = nextTransform.scale;
 
+    // Business objects are attached under the scene root, so keeping this
+    // transform in scene state preserves the same world placement.
     object.entity.setLocalPosition(x, y, z);
     object.entity.setLocalEulerAngles(rx, ry, rz);
     object.entity.setLocalScale(sx, sy, sz);
@@ -1102,7 +1143,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       bimAlignmentManager.setCurrent(nextTransform);
     }
 
-    console.log('[Transform] committed:', objectId, nextTransform);
+    if (!options.silentLog) {
+      console.log('[Transform] committed:', objectId, nextTransform);
+    }
     return nextTransform;
   }
 
@@ -2115,7 +2158,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       }
 
       const object = sceneObjectManager.getObject(objectId);
-      if (!object || !BUSINESS_OBJECT_DEFINITIONS[object.type] || !object.visible) {
+      if (!object || !isPickableObjectType(object.type) || !object.visible) {
         continue;
       }
 
@@ -2310,7 +2353,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     let closest = null;
 
     sceneObjectManager.getObjects()
-      .filter((object) => BUSINESS_OBJECT_DEFINITIONS[object.type] && object.visible)
+      .filter((object) => isPickableObjectType(object.type) && object.visible)
       .forEach((object) => {
         if (!object.entity) {
           return;
@@ -2591,6 +2634,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
           entity.name = displayName;
           app.root.addChild(entity);
+          bindSceneObjectEntity(entity, id, type);
 
           sceneObjectManager.addObject({
             id,
@@ -3099,6 +3143,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    console.log(`[ObjectTransformInspector] update ${targetObject.id}`, {
+      transform: next
+    });
     updateStatusMessage(`${targetObject.displayName ?? targetObject.name} transform updated`);
     return true;
   }
@@ -4031,6 +4078,25 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     logResult: false
   });
 
+  new ObjectTransformDragController({
+    app,
+    canvas,
+    cameraEntity: camera,
+    selectionManager,
+    cameraController,
+    pickBusinessObject,
+    applyTransformToObject,
+    shouldBlock: () => Boolean(
+      buildingEnvelopeController.isDrawing()
+      || getEditingQuadProjectionCameraId()
+      || robotDogPatrolController.getEditingRobotDogId()
+    ),
+    canDragObject: isDraggableObject,
+    log(message) {
+      console.log(message);
+    }
+  });
+
   const pickingController = new PickingController({
     app,
     canvas,
@@ -4173,7 +4239,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     selectableObjectController.handleSelectionChanged(selectionId);
 
     if (selected) {
+      console.log(`[ObjectSelection] selected ${selectionId} ${selected.type}`);
       pushLog(`Selected: ${selected.name}`);
+    }
+    if (!selectionId) {
+      console.log('[ObjectSelection] cleared');
     }
     const editingRobotDogId = robotDogPatrolController.getEditingRobotDogId();
     if (editingRobotDogId && selectionId && editingRobotDogId !== selectionId) {
