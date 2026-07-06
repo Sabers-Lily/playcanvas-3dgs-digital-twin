@@ -42,6 +42,7 @@ export class CameraVideoRuntime {
     this.lastError = null;
     this.lastSample = this.buildSample();
     this._playAttemptPending = false;
+    this._loadToken = 0;
     this._destroyed = false;
 
     this._handleLoadedMetadata = this.handlePlayableEvent.bind(this);
@@ -70,10 +71,17 @@ export class CameraVideoRuntime {
   async load(url = '', options = {}) {
     const normalizedUrl = url || '';
     const shouldLoop = options.loop ?? !isHlsUrl(normalizedUrl);
+    const loadToken = this._loadToken + 1;
+    this._loadToken = loadToken;
 
     if (normalizedUrl === this.sourceUrl && !options.forceReload) {
       this.videoElement.loop = shouldLoop;
-      this.tryPlay();
+      if (
+        this.videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        this.videoElement.networkState !== HTMLMediaElement.NETWORK_NO_SOURCE
+      ) {
+        await this.play();
+      }
       this.lastSample = this.buildSample();
       return this.lastSample;
     }
@@ -86,9 +94,9 @@ export class CameraVideoRuntime {
     this.destroyHls();
     this.videoElement.pause();
     this.videoElement.removeAttribute('src');
+    this.videoElement.load();
 
     if (!normalizedUrl) {
-      this.videoElement.load();
       this.lastSample = this.buildSample();
       return this.lastSample;
     }
@@ -102,7 +110,6 @@ export class CameraVideoRuntime {
       if (this.videoElement.canPlayType('application/vnd.apple.mpegurl')) {
         this.videoElement.src = normalizedUrl;
         this.videoElement.load();
-        this.tryPlay();
         this.lastSample = this.buildSample();
         return this.lastSample;
       }
@@ -114,56 +121,101 @@ export class CameraVideoRuntime {
         throw error;
       }
 
-      this.hls = new Hls({
+      const loaded = await this.loadHls(normalizedUrl, loadToken);
+      this.lastSample = this.buildSample();
+      return loaded ? this.lastSample : this.lastSample;
+    }
+
+    this.videoElement.src = normalizedUrl;
+    this.videoElement.load();
+    this.lastSample = this.buildSample();
+    return this.lastSample;
+  }
+
+  loadHls(url, loadToken) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (result, error = null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(result);
+      };
+
+      const hls = new Hls({
         lowLatencyMode: true,
         liveSyncDuration: 2,
         liveMaxLatencyDuration: 4,
         maxLiveSyncPlaybackRate: 1.5,
         backBufferLength: 10
       });
-      this.hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+
+      this.hls = hls;
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        if (loadToken !== this._loadToken) {
+          finish(false);
+          return;
+        }
+
         console.log(`${this.logPrefix} hls attached`, {
           runtimeId: this.runtimeId
         });
-        this.tryPlay();
+        hls.loadSource(url);
       });
-      this.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        this.syncToLiveEdge();
-        this.tryPlay();
-      });
-      this.hls.on(Hls.Events.LEVEL_UPDATED, () => {
-        this.syncToLiveEdge();
-      });
-      this.hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data?.fatal) {
-          console.warn(`${this.logPrefix} HLS fatal error:`, data);
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            this.status = 'loading';
-            this.lastError = data?.details || data?.type || 'HLS network error';
-            this.hls?.startLoad();
-            return;
-          }
-          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-            this.status = 'loading';
-            this.lastError = data?.details || data?.type || 'HLS media error';
-            this.hls?.recoverMediaError();
-            return;
-          }
-          this.status = 'error';
-          this.lastError = data?.details || data?.type || 'HLS fatal error';
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (loadToken !== this._loadToken) {
+          finish(false);
+          return;
         }
-      });
-      this.hls.loadSource(normalizedUrl);
-      this.hls.attachMedia(this.videoElement);
-      this.lastSample = this.buildSample();
-      return this.lastSample;
-    }
 
-    this.videoElement.src = normalizedUrl;
-    this.videoElement.load();
-    this.tryPlay();
-    this.lastSample = this.buildSample();
-    return this.lastSample;
+        console.log(`${this.logPrefix} hls manifest parsed`, {
+          runtimeId: this.runtimeId,
+          url
+        });
+        this.syncToLiveEdge();
+        finish(true);
+      });
+      hls.on(Hls.Events.LEVEL_UPDATED, () => {
+        if (loadToken !== this._loadToken) {
+          return;
+        }
+        this.syncToLiveEdge();
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data?.fatal) {
+          return;
+        }
+
+        console.warn(`${this.logPrefix} HLS fatal error:`, {
+          runtimeId: this.runtimeId,
+          url,
+          data
+        });
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          this.status = 'loading';
+          this.lastError = data?.details || data?.type || 'HLS network error';
+          this.hls?.startLoad();
+          return;
+        }
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          this.status = 'loading';
+          this.lastError = data?.details || data?.type || 'HLS media error';
+          this.hls?.recoverMediaError();
+          return;
+        }
+
+        this.status = 'error';
+        this.lastError = data?.details || data?.type || 'HLS fatal error';
+        finish(false, new Error(this.lastError));
+      });
+
+      hls.attachMedia(this.videoElement);
+    });
   }
 
   handlePlayableEvent() {
@@ -171,7 +223,7 @@ export class CameraVideoRuntime {
       this.status = 'ready';
     }
 
-    this.tryPlay();
+    this.play();
     this.lastSample = this.buildSample();
   }
 
@@ -212,7 +264,7 @@ export class CameraVideoRuntime {
     if (isHlsUrl(this.sourceUrl)) {
       this.status = 'loading';
       this.syncToLiveEdge();
-      this.tryPlay();
+      this.play();
     }
     this.lastSample = this.buildSample();
   }
@@ -222,34 +274,96 @@ export class CameraVideoRuntime {
       this.status = 'loading';
       this.syncToLiveEdge();
       this.hls?.startLoad();
-      this.tryPlay();
+      this.play();
     }
     this.lastSample = this.buildSample();
   }
 
-  tryPlay() {
+  async play() {
     if (!this.videoElement || this._destroyed || !this.sourceUrl || this._playAttemptPending) {
-      return;
+      return false;
     }
 
-    const playPromise = this.videoElement.play();
-    if (!playPromise?.then) {
-      return;
+    const hasSource =
+      (Boolean(this.videoElement.currentSrc) || Boolean(this.videoElement.src)) &&
+      this.videoElement.networkState !== HTMLMediaElement.NETWORK_NO_SOURCE;
+
+    if (!hasSource) {
+      this.status = 'loading';
+      this.lastError = null;
+      console.warn(`${this.logPrefix} play skipped: no source`, {
+        runtimeId: this.runtimeId,
+        url: this.sourceUrl,
+        src: this.videoElement.src,
+        currentSrc: this.videoElement.currentSrc,
+        networkState: this.videoElement.networkState
+      });
+      this.lastSample = this.buildSample();
+      return false;
+    }
+
+    if (this.videoElement.readyState < HTMLMediaElement.HAVE_METADATA) {
+      this.status = 'loading';
+      this.lastError = null;
+      this.lastSample = this.buildSample();
+      return false;
     }
 
     this._playAttemptPending = true;
-    playPromise
-      .catch((error) => {
-        this.lastError = formatVideoError(error);
-        if (this.status !== 'error') {
-          this.status = this.videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA ? 'ready' : 'loading';
-        }
-        console.warn(`${this.logPrefix} play failed:`, error);
-      })
-      .finally(() => {
-        this._playAttemptPending = false;
-        this.lastSample = this.buildSample();
+    try {
+      const playPromise = this.videoElement.play();
+      if (playPromise?.then) {
+        await playPromise;
+      }
+      if (this.status !== 'playing') {
+        this.status = this.videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA ? 'ready' : 'loading';
+      }
+      return true;
+    } catch (error) {
+      this.status = 'error';
+      this.lastError = formatVideoError(error);
+      console.warn(`${this.logPrefix} play failed:`, {
+        runtimeId: this.runtimeId,
+        url: this.sourceUrl,
+        src: this.videoElement.src,
+        currentSrc: this.videoElement.currentSrc,
+        readyState: this.videoElement.readyState,
+        networkState: this.videoElement.networkState,
+        error
       });
+      return false;
+    } finally {
+      this._playAttemptPending = false;
+      this.lastSample = this.buildSample();
+    }
+  }
+
+  pause() {
+    if (!this.videoElement || this._destroyed) {
+      return;
+    }
+
+    this.videoElement.pause();
+    if (this.status !== 'error' && this.status !== 'idle') {
+      this.status = 'paused';
+    }
+    this.lastSample = this.buildSample();
+  }
+
+  stop({ clearSource = false } = {}) {
+    if (!this.videoElement || this._destroyed) {
+      return;
+    }
+
+    this.videoElement.pause();
+    if (clearSource) {
+      this.destroyHls();
+      this.sourceUrl = '';
+      this.videoElement.removeAttribute('src');
+      this.videoElement.load();
+    }
+    this.status = clearSource ? 'idle' : 'stopped';
+    this.lastSample = this.buildSample();
   }
 
   update() {
@@ -263,7 +377,7 @@ export class CameraVideoRuntime {
       this.videoElement.paused &&
       !this.videoElement.ended
     ) {
-      this.tryPlay();
+      this.play();
     }
 
     if (

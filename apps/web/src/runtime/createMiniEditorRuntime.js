@@ -399,7 +399,9 @@ function createDefaultVideoProjectionMetadata(id, partial = {}) {
     sourceType: partial.sourceType ?? CAMERA_SOURCE_TYPES.CAMERA_STREAM,
     cameraId: partial.cameraId ?? 'camera1',
     streamUrl: partial.streamUrl ?? null,
-    mode: partial.mode === 'cameraFrustum' ? 'quadOverlay' : (partial.mode ?? 'quadOverlay'),
+    mode: partial.mode === 'cameraFrustum'
+      ? 'cameraFrustum'
+      : (partial.mode === 'quad' ? 'quad' : (partial.mode ?? 'quadOverlay')),
     videoUrl: partial.videoUrl ?? '',
     projectorFov: readNumberValue(partial.projectorFov, 45),
     projectorAspect: readNumberValue(partial.projectorAspect, 1.777),
@@ -934,6 +936,26 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         }
       });
       quadProjectionHelpers.delete(id);
+    });
+  }
+
+  function clearProjectionHelperEntities() {
+    const helperPrefixes = [
+      '__quad_projection_',
+      '__debug_projection_',
+      '__helper_projection_',
+      '__video_quad_',
+      '__projection_overlay_'
+    ];
+
+    app.root?.forEach?.((entity) => {
+      if (!helperPrefixes.some((prefix) => entity?.name?.startsWith(prefix))) {
+        return;
+      }
+
+      if (!entity.destroyed) {
+        entity.destroy();
+      }
     });
   }
 
@@ -3729,6 +3751,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       enabled: false
     });
     cameraProjectionManager.disableProjection(cameraId);
+    clearProjectionHelperEntities();
     updateStatusMessage(`Projection disabled: ${cameraId}`);
     return true;
   }

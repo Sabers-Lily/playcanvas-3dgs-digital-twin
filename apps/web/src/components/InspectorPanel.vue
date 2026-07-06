@@ -262,7 +262,9 @@ function resetVideoProjectionForm() {
   videoProjectionForm.sourceType = CAMERA_SOURCE_TYPES.CAMERA_STREAM;
   videoProjectionForm.cameraId = projection?.cameraId ?? 'camera1';
   videoProjectionForm.streamUrl = projection?.streamUrl ?? '';
-  videoProjectionForm.mode = 'quadOverlay';
+  videoProjectionForm.mode = projection?.mode === 'cameraFrustum'
+    ? 'cameraFrustum'
+    : (projection?.mode === 'quad' ? 'quad' : 'quadOverlay');
   videoProjectionForm.videoUrl = projection?.videoUrl ?? '';
   videoProjectionForm.opacity = projection?.opacity ?? 1;
   videoProjectionForm.softEdge = projection?.softEdge ?? 0;
