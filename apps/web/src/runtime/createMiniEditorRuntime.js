@@ -6,7 +6,7 @@ import { BimProxyManager } from '../engine/BimProxyManager.js';
 import { CameraController } from '../engine/CameraController.js';
 import { BuildingEnvelopeController } from '../engine/BuildingEnvelopeController.js';
 import { CameraVideoRuntime } from '../engine/CameraVideoRuntime.js';
-import { GsplatMp4ProjectorAdapter } from '../engine/GsplatMp4ProjectorAdapter.js';
+import { CameraProjectionManager } from '../engine/CameraProjectionManager.js';
 import { GsplatPointPicker } from '../engine/GsplatPointPicker.js';
 import { MarkerManager } from '../engine/MarkerManager.js';
 import { ObjectTransformDragController } from '../engine/ObjectTransformDragController.js';
@@ -655,8 +655,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   let currentBlobUrl = null;
   let loadToken = 0;
   let placementMode = null;
-  let activeProjectorCameraId = null;
-  let activeMp4Projector = null;
   let activeEditMode = null;
   const transformEditState = createDefaultTransformEditState();
   let buildingEnvelopeCounter = 0;
@@ -668,12 +666,19 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   quadHelperMaterial.diffuse = new pc.Color(0.1, 0.85, 1);
   quadHelperMaterial.emissive = new pc.Color(0.05, 0.35, 0.5);
   quadHelperMaterial.update();
+  const cameraProjectionManager = new CameraProjectionManager({
+    app,
+    getVideoElement(cameraObjectId, projection = {}) {
+      const runtime = ensureCameraVideoRuntime(cameraObjectId, projection);
+      return runtime?.getVideoElement?.() ?? null;
+    }
+  });
 
   function buildCameraStreamsSnapshot() {
     return {
       cameras: state.cameraStreams.cameras.map((cameraSource) => ({ ...cameraSource })),
       statuses: Object.fromEntries(Array.from(cameraStreamStatuses.entries()).map(([cameraId, status]) => [cameraId, { ...status }])),
-      projectionRuntimes: Object.fromEntries(Array.from(cameraVideoRuntimes.entries()).map(([cameraId, runtime]) => [cameraId, runtime.getState()])),
+      projectionRuntimes: Object.fromEntries(Array.from(cameraVideoRuntimes.entries()).map(([cameraObjectId, runtime]) => [cameraObjectId, runtime.getState()])),
       apiStatus: state.cameraStreams.apiStatus
     };
   }
@@ -693,28 +698,39 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
   }
 
-  function getOrCreateCameraVideoRuntime(cameraId) {
-    const existingRuntime = cameraVideoRuntimes.get(cameraId);
+  function getOrCreateCameraVideoRuntime(cameraObjectId) {
+    const existingRuntime = cameraVideoRuntimes.get(cameraObjectId);
     if (existingRuntime) {
       return existingRuntime;
     }
 
     const runtime = new CameraVideoRuntime({
-      runtimeId: cameraId
+      runtimeId: cameraObjectId
     });
-    cameraVideoRuntimes.set(cameraId, runtime);
+    cameraVideoRuntimes.set(cameraObjectId, runtime);
     return runtime;
   }
 
-  function ensureCameraVideoRuntime(cameraId, projection = {}) {
-    const runtime = getOrCreateCameraVideoRuntime(cameraId);
+  function disposeCameraVideoRuntime(cameraObjectId) {
+    const runtime = cameraVideoRuntimes.get(cameraObjectId);
+    if (!runtime) {
+      return false;
+    }
+
+    runtime.destroy();
+    cameraVideoRuntimes.delete(cameraObjectId);
+    return true;
+  }
+
+  function ensureCameraVideoRuntime(cameraObjectId, projection = {}) {
+    const runtime = getOrCreateCameraVideoRuntime(cameraObjectId);
     const resolvedVideoUrl = resolveProjectionVideoUrl(projection);
 
     runtime.load(resolvedVideoUrl, {
       loop: projection.sourceType !== CAMERA_SOURCE_TYPES.CAMERA_STREAM
     }).catch((error) => {
       console.warn('[CameraVideoRuntime] load failed:', {
-        cameraId,
+        cameraObjectId,
         resolvedVideoUrl,
         error
       });
@@ -865,83 +881,36 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return nextProjection;
   }
 
-  function destroyActiveMp4Projector() {
-    if (!activeMp4Projector) {
-      return;
+  function syncProjectionInstanceForCamera(cameraId, projection = null) {
+    const cameraObject = sceneObjectManager.getObject(cameraId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      return null;
     }
 
-    activeMp4Projector.destroy();
-    activeMp4Projector = null;
-    activeProjectorCameraId = null;
+    const nextProjection = createDefaultVideoProjectionMetadata(
+      cameraId,
+      projection ?? cameraObject.metadata?.videoProjection
+    );
+
+    cameraProjectionManager.syncProjection(cameraId, nextProjection);
+    return nextProjection;
   }
 
-  function ensureMp4ProjectorForCamera(cameraId, options = {}) {
-    const cameraObject = sceneObjectManager.getObject(cameraId);
-    if (!cameraObject?.entity) {
-      throw new Error(`Camera device missing: ${cameraId}`);
-    }
+  function syncAllCameraProjectionInstances() {
+    const activeCameraIds = new Set();
 
-    const projection = createDefaultVideoProjectionMetadata(cameraId, {
-      ...cameraObject.metadata?.videoProjection,
-      ...options
-    });
-    const projectionRuntime = ensureCameraVideoRuntime(cameraId, projection);
-    const videoElement = projectionRuntime.getVideoElement();
-    const resolvedVideoUrl = resolveProjectionVideoUrl(projection);
-
-    const shouldRecreate = !activeMp4Projector || activeProjectorCameraId !== cameraId;
-    if (shouldRecreate) {
-      destroyActiveMp4Projector();
-      activeMp4Projector = new GsplatMp4ProjectorAdapter({
-        app,
-        gsplatEntity: currentGsplatEntity,
-        mainCameraEntity: camera,
-        projectorEntity: cameraObject.entity,
-        videoElement,
-        mode: projection.mode,
-        projectorFov: projection.projectorFov,
-        projectorAspect: projection.projectorAspect,
-        projectorNear: projection.projectorNear,
-        projectorFar: projection.projectorFar,
-        videoUrl: resolvedVideoUrl,
-        opacity: projection.opacity,
-        softEdge: projection.softEdge,
-        flipY: projection.flipY,
-        replaceMode: projection.replaceMode,
-        quadPoints: projection.quadPoints,
-        quadPlaneTolerance: projection.quadPlaneTolerance,
-        enabledProjection: projection.enabled,
-        logDebug: true
+    sceneObjectManager.getObjects()
+      .filter((object) => object.type === 'cameraDevice')
+      .forEach((cameraObject) => {
+        activeCameraIds.add(cameraObject.id);
+        syncProjectionInstanceForCamera(cameraObject.id, cameraObject.metadata?.videoProjection);
       });
-      activeMp4Projector.initialize();
-      activeProjectorCameraId = cameraId;
-    } else {
-      activeMp4Projector.patch({
-        gsplatEntity: currentGsplatEntity,
-        mainCameraEntity: camera,
-        projectorEntity: cameraObject.entity,
-        videoElement,
-        mode: projection.mode,
-        projectorFov: projection.projectorFov,
-        projectorAspect: projection.projectorAspect,
-        projectorNear: projection.projectorNear,
-        projectorFar: projection.projectorFar,
-        videoUrl: resolvedVideoUrl,
-        opacity: projection.opacity,
-        softEdge: projection.softEdge,
-        flipY: projection.flipY,
-        replaceMode: projection.replaceMode,
-        quadPoints: projection.quadPoints,
-        quadPlaneTolerance: projection.quadPlaneTolerance,
-        enabledProjection: projection.enabled
-      });
-    }
 
-    syncCameraProjectionMetadata(cameraId, {
-      ...projection
+    Array.from(cameraProjectionManager.instances.keys()).forEach((cameraObjectId) => {
+      if (!activeCameraIds.has(cameraObjectId)) {
+        cameraProjectionManager.disposeProjection(cameraObjectId);
+      }
     });
-
-    return activeMp4Projector;
   }
 
   function clearQuadProjectionHelpers(cameraId = null) {
@@ -1062,9 +1031,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       quadEditing: false,
       quadPoints: []
     });
-    if (activeProjectorCameraId === cameraId) {
-      destroyActiveMp4Projector();
-    }
+    cameraProjectionManager.clearFourPoints(cameraId);
     clearQuadProjectionHelpers(cameraId);
     updateStatusMessage('四点区域投影点位已清空');
     return true;
@@ -1084,35 +1051,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       quadPoints: projection.quadPoints?.length ?? 0
     });
 
-    ensureCameraVideoRuntime(cameraId, projection);
-
-    if (projection.enabled && (projection.quadPoints?.length ?? 0) === 4) {
-      if (activeProjectorCameraId === cameraId && activeMp4Projector) {
-        activeMp4Projector.patch({
-          gsplatEntity: currentGsplatEntity,
-          mainCameraEntity: camera,
-          projectorEntity: target.entity,
-          videoElement: getOrCreateCameraVideoRuntime(cameraId).getVideoElement(),
-          mode: projection.mode,
-          projectorFov: projection.projectorFov,
-          projectorAspect: projection.projectorAspect,
-          projectorNear: projection.projectorNear,
-          projectorFar: projection.projectorFar,
-          videoUrl: resolveProjectionVideoUrl(projection),
-          opacity: projection.opacity,
-          softEdge: projection.softEdge,
-          flipY: projection.flipY,
-          replaceMode: projection.replaceMode,
-          quadPoints: projection.quadPoints,
-          quadPlaneTolerance: projection.quadPlaneTolerance,
-          enabledProjection: true
-        });
-      } else {
-        ensureMp4ProjectorForCamera(cameraId, projection);
-      }
-    } else if (activeProjectorCameraId === cameraId) {
-      destroyActiveMp4Projector();
-    }
+    syncProjectionInstanceForCamera(cameraId, projection);
   }
 
   function getCurrentSplatState() {
@@ -1136,7 +1075,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     window.selectionManager = selectionManager;
     window.robotDogPatrolController = robotDogPatrolController;
     window.placementMode = placementMode;
-    window.gsplatVideoProjector = activeMp4Projector;
+    window.cameraProjectionManager = cameraProjectionManager;
     window.cameraVideoRuntimes = cameraVideoRuntimes;
     window.createRobotDog = createRobotDog;
     window.startRobotDogRouteEditing = startRobotDogRouteEditing;
@@ -1816,6 +1755,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     if (options.visible === false) {
       sceneObjectManager.setVisible(id, false);
+    }
+
+    if (type === 'cameraDevice' && projectionMetadata) {
+      syncProjectionInstanceForCamera(id, projectionMetadata);
     }
 
     selectionManager.select(id);
@@ -3151,6 +3094,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   function clearSceneForProjectOpen() {
     clearRestorableSceneObjects();
+    cameraProjectionManager.disposeAll();
+    Array.from(cameraVideoRuntimes.keys()).forEach((cameraObjectId) => {
+      disposeCameraVideoRuntime(cameraObjectId);
+    });
     if (markerManager.marker) {
       markerManager.clearMarker();
     }
@@ -3237,6 +3184,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         pushLog(message);
       }
     }
+
+    syncAllCameraProjectionInstances();
 
     pushLog(`Restore scene ok: ${restoredCount} objects`);
     updateStatusMessage(`Restore scene ok: ${restoredCount} objects`);
@@ -3636,10 +3585,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     if (object.type === 'cameraDevice') {
-      if (activeProjectorCameraId === object.id) {
-        destroyActiveMp4Projector();
-        activeProjectorCameraId = null;
-      }
+      cameraProjectionManager.disposeProjection(object.id);
+      disposeCameraVideoRuntime(object.id);
+      clearQuadProjectionHelpers(object.id);
     }
 
     if (object.type === 'robotDog') {
@@ -3765,13 +3713,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
-    if (activeProjectorCameraId === cameraId) {
-      destroyActiveMp4Projector();
-    }
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
       enabled: false
     });
+    cameraProjectionManager.disableProjection(cameraId);
     updateStatusMessage(`Projection disabled: ${cameraId}`);
     return true;
   }
@@ -3823,6 +3769,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    const editingCameraId = getEditingQuadProjectionCameraId();
+    if (editingCameraId && editingCameraId !== cameraId) {
+      updateStatusMessage('请先完成或取消当前摄像头四点选择');
+      return false;
+    }
+
     if (transformEditState.enabled) {
       commitTransformEdit({
         skipStatusMessage: true
@@ -3838,9 +3790,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       quadEditing: true,
       quadPoints: []
     });
-    if (activeProjectorCameraId === cameraId) {
-      destroyActiveMp4Projector();
-    }
+    cameraProjectionManager.disableProjection(cameraId);
     clearQuadProjectionHelpers(cameraId);
     console.log('[FourPointProjection] start selecting', {
       cameraId
@@ -4305,10 +4255,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           return;
         }
 
-        if (!nextEnabled && activeProjectorCameraId === selectedId) {
-          destroyActiveMp4Projector();
-        }
-
         updateCameraVideoProjection(selectedId, {
           ...currentProjection,
           enabled: nextEnabled,
@@ -4674,7 +4620,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       }
     });
 
-    activeMp4Projector?.update();
+    cameraProjectionManager.update();
     robotDogPatrolController.update(dt ?? 0);
     refreshTransformGizmo();
     transformGizmo.update();

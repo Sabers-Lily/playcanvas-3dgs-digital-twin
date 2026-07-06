@@ -30,9 +30,13 @@ function createQuadUvs(flipY = false) {
 }
 
 function computeQuadNormal(points) {
+  if (!Array.isArray(points) || points.length < 4) {
+    return new pc.Vec3(0, 1, 0);
+  }
+
   const edgeA = points[1].clone().sub(points[0]);
   const edgeB = points[3].clone().sub(points[0]);
-  const normal = edgeA.cross(edgeB);
+  const normal = new pc.Vec3().cross(edgeA, edgeB);
   if (normal.lengthSq() <= 1e-8) {
     return new pc.Vec3(0, 1, 0);
   }
@@ -70,6 +74,19 @@ export class FourPointVideoProjector {
     this.clear();
 
     const points = anchors.map((anchor) => toVec3(anchor));
+    const hasInvalidPoint = points.some((point) => (
+      !Number.isFinite(point.x) ||
+      !Number.isFinite(point.y) ||
+      !Number.isFinite(point.z)
+    ));
+    if (hasInvalidPoint) {
+      console.warn(`${this.logPrefix} apply skipped: invalid anchors`, {
+        cameraId,
+        anchors
+      });
+      return false;
+    }
+
     const quadNormal = computeQuadNormal(points);
     const liftedPoints = points.map((point) => point.clone().add(quadNormal.clone().mulScalar(0.01)));
     const positions = [];
