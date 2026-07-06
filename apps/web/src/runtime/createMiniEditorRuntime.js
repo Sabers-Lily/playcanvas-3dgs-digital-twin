@@ -31,6 +31,7 @@ const OBJECT_IDS = {
 const BUILDING_ENVELOPE_TYPE = 'buildingEnvelope';
 const BUILDING_ENVELOPE_OVERLAY_LAYER_NAME = 'BuildingEnvelopeOverlay';
 const ACTIVE_EDIT_MODE = {
+  TRANSFORM: 'transform',
   QUAD_VIDEO_PROJECTION: 'quadVideoProjection',
   BUILDING_ENVELOPE_DRAWING: 'buildingEnvelopeDrawing'
 };
@@ -187,6 +188,15 @@ function cloneTransform(transform) {
     position: [...(transform?.position ?? [0, 0, 0])],
     rotation: [...(transform?.rotation ?? [0, 0, 0])],
     scale: [...(transform?.scale ?? [1, 1, 1])]
+  };
+}
+
+function createDefaultTransformEditState() {
+  return {
+    enabled: false,
+    objectId: null,
+    startTransform: null,
+    dragMode: 'none'
   };
 }
 
@@ -580,6 +590,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       bim: statusState.bim.detail,
       pick: statusState.pick.detail
     },
+    transformEdit: createDefaultTransformEditState(),
     contextMenu: {
       open: false,
       objectId: null,
@@ -599,6 +610,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   let activeProjectorCameraId = null;
   let activeMp4Projector = null;
   let activeEditMode = null;
+  const transformEditState = createDefaultTransformEditState();
   let buildingEnvelopeCounter = 0;
   const quadProjectionHelpers = new Map();
   const cameraStreamStatuses = new Map();
@@ -1245,6 +1257,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       bim: statusState.bim.detail,
       pick: statusState.pick.detail
     };
+    state.transformEdit = buildTransformEditSnapshot();
 
     return {
       objects: state.objects,
@@ -1258,6 +1271,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       cameraStreams: state.cameraStreams,
       statusMessage: state.statusMessage,
       statusSummary: { ...state.statusSummary },
+      transformEdit: state.transformEdit,
       contextMenu: { ...state.contextMenu },
       cameraState: formatCameraState()
     };
@@ -1280,10 +1294,136 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
   }
 
-  function updateStatusMessage(message) {
+  function updateStatusMessage(message, options = {}) {
     statusState.message = message;
-    pushLog(message);
+    if (!options.skipLog) {
+      pushLog(message);
+    }
     emitState();
+  }
+
+  function buildTransformEditSnapshot() {
+    return {
+      enabled: transformEditState.enabled,
+      objectId: transformEditState.objectId,
+      startTransform: transformEditState.startTransform
+        ? cloneTransform(transformEditState.startTransform)
+        : null,
+      dragMode: transformEditState.dragMode
+    };
+  }
+
+  function clearTransformEditState() {
+    transformEditState.enabled = false;
+    transformEditState.objectId = null;
+    transformEditState.startTransform = null;
+    transformEditState.dragMode = 'none';
+  }
+
+  function syncTransformEditStatusMessage() {
+    if (transformEditState.enabled && transformEditState.objectId) {
+      const editingObject = sceneObjectManager.getObject(transformEditState.objectId);
+      const objectName = editingObject?.displayName ?? editingObject?.name ?? transformEditState.objectId;
+      updateStatusMessage(`Transform edit enabled: ${objectName} | Drag: ${transformEditState.dragMode}`, {
+        skipLog: true
+      });
+      return;
+    }
+
+    const selectedObject = selectionManager.getSelectedObject();
+    if (selectedObject) {
+      updateStatusMessage(`Selected: ${selectedObject.displayName ?? selectedObject.name} | Transform edit: off`, {
+        skipLog: true
+      });
+    }
+  }
+
+  function isTransformEditSelectionBlocked(nextObjectId) {
+    return Boolean(
+      transformEditState.enabled &&
+      transformEditState.objectId &&
+      nextObjectId &&
+      transformEditState.objectId !== nextObjectId
+    );
+  }
+
+  function enterTransformEdit(objectId = selectionManager.getSelectedId()) {
+    const selectedObject = sceneObjectManager.getObject(objectId);
+    if (!selectedObject) {
+      updateStatusMessage('No selection');
+      return false;
+    }
+
+    if (!TRANSFORM_EDITABLE_TYPES.has(selectedObject.type)) {
+      updateStatusMessage(`${selectedObject.displayName ?? selectedObject.name} transform is not editable`);
+      return false;
+    }
+
+    if (getEditingQuadProjectionCameraId()) {
+      updateStatusMessage('请先完成四点选择');
+      return false;
+    }
+
+    if (buildingEnvelopeController.isDrawing()) {
+      updateStatusMessage('请先完成当前编辑模式');
+      return false;
+    }
+
+    if (robotDogPatrolController.getEditingRobotDogId()) {
+      updateStatusMessage('请先完成当前编辑模式');
+      return false;
+    }
+
+    transformEditState.enabled = true;
+    transformEditState.objectId = selectedObject.id;
+    transformEditState.startTransform = getTransformForObject(selectedObject.id);
+    transformEditState.dragMode = 'none';
+    console.info('[TransformEdit] enter', selectedObject.id);
+    syncTransformEditStatusMessage();
+    emitState();
+    return true;
+  }
+
+  function commitTransformEdit(options = {}) {
+    if (!transformEditState.enabled) {
+      return false;
+    }
+
+    const objectId = transformEditState.objectId;
+    console.info('[TransformEdit] commit', objectId);
+    clearTransformEditState();
+
+    if (!options.skipStatusMessage) {
+      syncTransformEditStatusMessage();
+    }
+
+    emitState();
+    return true;
+  }
+
+  function cancelTransformEdit(options = {}) {
+    if (!transformEditState.enabled) {
+      return false;
+    }
+
+    const objectId = transformEditState.objectId;
+    const startTransform = transformEditState.startTransform;
+
+    if (objectId && startTransform) {
+      applyTransformToObject(objectId, startTransform, {
+        silentLog: true
+      });
+    }
+
+    console.info('[TransformEdit] cancel', objectId);
+    clearTransformEditState();
+
+    if (!options.skipStatusMessage) {
+      syncTransformEditStatusMessage();
+    }
+
+    emitState();
+    return true;
   }
 
   function setUploadedAssets(assets) {
@@ -1644,7 +1784,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   function refreshTransformGizmo() {
     const selectedObject = selectionManager.getSelectedObject();
-    if (!selectedObject || isSelectableHoverBlocked() || !isDraggableObject(selectedObject)) {
+    const isTransformEditingSelection = Boolean(
+      transformEditState.enabled &&
+      transformEditState.objectId &&
+      transformEditState.objectId === selectedObject?.id
+    );
+
+    if (!selectedObject || !isTransformEditingSelection || isSelectableHoverBlocked() || !isDraggableObject(selectedObject)) {
       transformGizmo.hide();
       return;
     }
@@ -1983,6 +2129,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   }
 
   function getCurrentEditMode() {
+    if (transformEditState.enabled) {
+      return ACTIVE_EDIT_MODE.TRANSFORM;
+    }
+
     if (getEditingQuadProjectionCameraId()) {
       return ACTIVE_EDIT_MODE.QUAD_VIDEO_PROJECTION;
     }
@@ -3364,6 +3514,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       console.log('[ContextMenu] delete object:', object.id, object.displayName ?? object.name);
     }
 
+    if (transformEditState.enabled && transformEditState.objectId === object.id) {
+      clearTransformEditState();
+    }
+
     if (object.id === OBJECT_IDS.marker) {
       markerManager.clearMarker();
     }
@@ -3568,6 +3722,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    if (transformEditState.enabled) {
+      commitTransformEdit({
+        skipStatusMessage: true
+      });
+    }
+
     clearBuildingEnvelopeHover();
     selectionManager.select(cameraId);
     syncCameraProjectionMetadata(cameraId, {
@@ -3744,9 +3904,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    if (isTransformEditSelectionBlocked(objectId)) {
+      console.info('[TransformEdit] blocked selection while editing');
+      updateStatusMessage('请先完成或取消当前编辑');
+      return false;
+    }
+
     console.log('[Hierarchy] select object:', objectId, selected.displayName ?? selected.name, selected.type);
     selectionManager.select(objectId);
-    updateStatusMessage(`Selected: ${selected.displayName ?? selected.name}`);
+    syncTransformEditStatusMessage();
     return true;
   }
 
@@ -3790,6 +3956,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   function handleInspectorAction(action, payload = null) {
     switch (action) {
+      case 'enter-transform-edit':
+        enterTransformEdit(payload?.objectId ?? selectionManager.getSelectedId());
+        return;
+      case 'commit-transform-edit':
+        commitTransformEdit();
+        return;
+      case 'cancel-transform-edit':
+        cancelTransformEdit();
+        return;
       case 'rename':
         renameSelectedObject(payload ?? '');
         return;
@@ -4108,6 +4283,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       || robotDogPatrolController.getEditingRobotDogId()
     ),
     canDragObject: isDraggableObject,
+    isTransformEditEnabled: () => transformEditState.enabled,
+    getTransformEditObjectId: () => transformEditState.objectId,
+    onDragStateChange: (dragMode) => {
+      transformEditState.dragMode = dragMode;
+      if (transformEditState.enabled) {
+        syncTransformEditStatusMessage();
+        emitState();
+      }
+    },
     log(message) {
       console.log(message);
     }
@@ -4132,9 +4316,14 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       if (buildingEnvelopeController.isDrawing()) {
         return;
       }
+      if (isTransformEditSelectionBlocked(hit.objectId)) {
+        console.info('[TransformEdit] blocked selection while editing');
+        updateStatusMessage('请先完成或取消当前编辑');
+        return;
+      }
       clearBuildingEnvelopeHover();
       selectionManager.select(hit.objectId);
-      updateStatusMessage(`Selected object: ${hit.object.displayName ?? hit.object.name}`);
+      syncTransformEditStatusMessage();
     },
     onBusinessObjectHover: (hit) => {
       canvas.style.cursor = 'pointer';
@@ -4271,11 +4460,33 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       emitState();
       return;
     }
+    if (!transformEditState.enabled) {
+      syncTransformEditStatusMessage();
+    }
     refreshTransformGizmo();
     emitState();
   });
 
   document.addEventListener('keydown', (event) => {
+    const active = document.activeElement;
+    const tag = active?.tagName?.toLowerCase();
+    const isEditingText =
+      tag === 'input' ||
+      tag === 'textarea' ||
+      active?.isContentEditable;
+
+    if (transformEditState.enabled && !isEditingText) {
+      if (event.key === 'Escape') {
+        cancelTransformEdit();
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        commitTransformEdit();
+        return;
+      }
+    }
+
     if (event.key === 'Escape') {
       if (cancelBuildingEnvelopeDrawing()) {
         return;
@@ -4293,13 +4504,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     if (event.key !== 'Delete') {
       return;
     }
-
-    const active = document.activeElement;
-    const tag = active?.tagName?.toLowerCase();
-    const isEditingText =
-      tag === 'input' ||
-      tag === 'textarea' ||
-      active?.isContentEditable;
 
     if (isEditingText) {
       return;

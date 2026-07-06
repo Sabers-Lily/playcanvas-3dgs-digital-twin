@@ -32,6 +32,9 @@ export class ObjectTransformDragController {
     applyTransformToObject,
     shouldBlock,
     canDragObject,
+    isTransformEditEnabled,
+    getTransformEditObjectId,
+    onDragStateChange,
     log
   }) {
     this.app = app;
@@ -44,6 +47,9 @@ export class ObjectTransformDragController {
     this.applyTransformToObject = applyTransformToObject || null;
     this.shouldBlock = shouldBlock || null;
     this.canDragObject = canDragObject || null;
+    this.isTransformEditEnabled = isTransformEditEnabled || null;
+    this.getTransformEditObjectId = getTransformEditObjectId || null;
+    this.onDragStateChange = typeof onDragStateChange === 'function' ? onDragStateChange : null;
     this.log = typeof log === 'function' ? log : () => {};
 
     this.dragThresholdSq = 16;
@@ -52,14 +58,26 @@ export class ObjectTransformDragController {
     this.app.mouse?.on(pc.EVENT_MOUSEDOWN, this._onMouseDown, this);
     this.app.mouse?.on(pc.EVENT_MOUSEMOVE, this._onMouseMove, this);
     this.app.mouse?.on(pc.EVENT_MOUSEUP, this._onMouseUp, this);
+    window.addEventListener('pointerup', this._handleWindowPointerUp);
+    window.addEventListener('blur', this._handleWindowBlur);
   }
 
   destroy() {
     this.app.mouse?.off(pc.EVENT_MOUSEDOWN, this._onMouseDown, this);
     this.app.mouse?.off(pc.EVENT_MOUSEMOVE, this._onMouseMove, this);
     this.app.mouse?.off(pc.EVENT_MOUSEUP, this._onMouseUp, this);
+    window.removeEventListener('pointerup', this._handleWindowPointerUp);
+    window.removeEventListener('blur', this._handleWindowBlur);
     this.pendingSession = null;
   }
+
+  _handleWindowPointerUp = () => {
+    this._finishSession();
+  };
+
+  _handleWindowBlur = () => {
+    this._finishSession();
+  };
 
   _shouldIgnoreOriginalEvent(originalEvent) {
     if (!originalEvent || originalEvent.target !== this.canvas) {
@@ -121,6 +139,7 @@ export class ObjectTransformDragController {
   _clearSession() {
     this.pendingSession = null;
     this.cameraController?.setEnabled(true);
+    this.onDragStateChange?.('none');
   }
 
   _onMouseDown(event) {
@@ -154,6 +173,18 @@ export class ObjectTransformDragController {
         })()
       : (this.pickBusinessObject?.(point.x, point.y) ?? null);
     if (!hit?.object?.entity || !this.canDragObject?.(hit.object)) {
+      this.pendingSession = null;
+      return;
+    }
+
+    if (!this.isTransformEditEnabled?.()) {
+      console.log('[ObjectTransformDrag] blocked because transform edit disabled');
+      this.pendingSession = null;
+      return;
+    }
+
+    const editingObjectId = this.getTransformEditObjectId?.();
+    if (!editingObjectId || editingObjectId !== hit.objectId) {
       this.pendingSession = null;
       return;
     }
@@ -205,6 +236,7 @@ export class ObjectTransformDragController {
 
       this.pendingSession.active = true;
       this.canvas.style.cursor = 'grabbing';
+      this.onDragStateChange?.(this.pendingSession.mode);
       console.log(`[ObjectTransformDrag] start ${this.pendingSession.mode} ${this.pendingSession.objectId}`);
     }
 
@@ -242,6 +274,14 @@ export class ObjectTransformDragController {
 
   _onMouseUp(event) {
     if (!this.pendingSession || event.button !== pc.MOUSEBUTTON_LEFT) {
+      return;
+    }
+
+    this._finishSession();
+  }
+
+  _finishSession() {
+    if (!this.pendingSession) {
       return;
     }
 

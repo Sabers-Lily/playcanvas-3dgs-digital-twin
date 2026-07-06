@@ -63,6 +63,12 @@ const snapshot = reactive({
     bim: 'BIM idle',
     pick: 'Ready'
   },
+  transformEdit: {
+    enabled: false,
+    objectId: null,
+    startTransform: null,
+    dragMode: 'none'
+  },
   hierarchyAddMenuOpen: false,
   contextMenu: {
     open: false,
@@ -149,6 +155,12 @@ function syncSnapshot(next) {
   snapshot.cameraStreams = normalizeCameraStreams(next.cameraStreams);
   snapshot.statusMessage = next.statusMessage;
   snapshot.statusSummary = next.statusSummary;
+  snapshot.transformEdit = next.transformEdit ?? {
+    enabled: false,
+    objectId: null,
+    startTransform: null,
+    dragMode: 'none'
+  };
   snapshot.contextMenu = {
     ...next.contextMenu,
     kind: 'scene-object'
@@ -266,6 +278,20 @@ const currentEditBanner = computed(() => {
         { action: 'undo-building-envelope-point', label: '撤销上一点' },
         { action: 'finish-building-envelope-drawing', label: '闭合并创建', variant: 'primary' },
         { action: 'cancel-building-envelope-drawing', label: '取消', variant: 'danger' }
+      ]
+    };
+  }
+
+  if (snapshot.transformEdit?.enabled && selectedObject) {
+    return {
+      label: '编辑模式',
+      title: '正在编辑位置',
+      description: snapshot.transformEdit.dragMode === 'height-y'
+        ? 'Shift + 拖拽正在调整 Y 高度。Enter 完成，Esc 取消。'
+        : '普通拖拽沿 XZ 平面移动。Shift + 拖拽调整 Y 高度。Enter 完成，Esc 取消。',
+      actions: [
+        { action: 'commit-transform-edit', label: '完成编辑', variant: 'primary' },
+        { action: 'cancel-transform-edit', label: '取消编辑', variant: 'danger' }
       ]
     };
   }
@@ -822,6 +848,7 @@ onBeforeUnmount(() => {
         :camera-streams="snapshot.cameraStreams"
         :alignment="snapshot.alignment"
         :steps="snapshot.steps"
+        :transform-edit="snapshot.transformEdit"
         :camera-state="snapshot.cameraState"
         @action="onInspectorAction"
       />

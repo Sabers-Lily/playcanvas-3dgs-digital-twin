@@ -39,6 +39,15 @@ const props = defineProps({
       scale: 0.01
     })
   },
+  transformEdit: {
+    type: Object,
+    default: () => ({
+      enabled: false,
+      objectId: null,
+      startTransform: null,
+      dragMode: 'none'
+    })
+  },
   cameraState: {
     type: Object,
     default: () => ({
@@ -116,6 +125,10 @@ const isRobotDog = computed(() => props.selection?.type === 'robotDog');
 const isBuildingEnvelope = computed(() => props.selection?.type === 'buildingEnvelope');
 const isMarker = computed(() => props.selection?.type === 'marker');
 const isTransformEditable = computed(() => TRANSFORM_EDITABLE_TYPES.has(props.selection?.type));
+const isTransformEditingSelection = computed(() => (
+  Boolean(props.transformEdit?.enabled) &&
+  props.transformEdit?.objectId === props.selection?.id
+));
 const selectedAssetType = computed(() => String(props.selectedAsset?.type || '').toLowerCase());
 const videoProjection = computed(() => props.selection?.metadata?.videoProjection ?? {});
 const cameraOptions = computed(() => Array.isArray(props.cameraStreams?.cameras) ? props.cameraStreams.cameras : []);
@@ -168,6 +181,11 @@ const patrolCanStart = computed(() => (
 ));
 const buildingEnvelope = computed(() => props.selection?.metadata?.envelope ?? null);
 const buildingEnvelopePointCount = computed(() => buildingEnvelope.value?.points?.length ?? 0);
+const transformGuideText = computed(() => (
+  isTransformEditingSelection.value
+    ? '正在编辑位置。普通拖拽：沿 XZ 平面移动。Shift + 拖拽：调整 Y 高度。Esc：取消编辑。Enter：完成编辑。'
+    : '点击“编辑位置”后可拖拽对象。普通拖拽沿 XZ 平面移动。Shift + 拖拽调整 Y 高度。Rotation / Scale 暂时通过右侧数值编辑。'
+));
 
 const projectionModeLabel = computed(() => {
   if (videoProjectionForm.mode === 'quad') {
@@ -355,6 +373,12 @@ function emitTransform() {
     position: [...transformForm.position],
     rotation: [...transformForm.rotation],
     scale: [transformForm.scale, transformForm.scale, transformForm.scale]
+  });
+}
+
+function handleEnterTransformEdit() {
+  emit('action', 'enter-transform-edit', {
+    objectId: props.selection?.id
   });
 }
 
@@ -575,7 +599,7 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="inspector-note">
-                拖拽对象：沿 XZ 平面移动。Shift + 拖拽：调整 Y 高度。拖拽竖直箭头：只调整 Y 高度。
+                {{ transformGuideText }}
               </div>
             </div>
           </InspectorSection>
@@ -726,6 +750,30 @@ onBeforeUnmount(() => {
 
           <InspectorSection title="操作" :default-open="true">
             <div class="inspector-actions">
+              <button
+                v-if="isTransformEditable && !isTransformEditingSelection"
+                class="button-primary"
+                type="button"
+                @click="handleEnterTransformEdit"
+              >
+                编辑位置
+              </button>
+              <button
+                v-if="isTransformEditingSelection"
+                class="button-primary"
+                type="button"
+                @click="emit('action', 'commit-transform-edit')"
+              >
+                完成编辑
+              </button>
+              <button
+                v-if="isTransformEditingSelection"
+                class="button-secondary"
+                type="button"
+                @click="emit('action', 'cancel-transform-edit')"
+              >
+                取消编辑
+              </button>
               <button class="button-secondary" type="button" @click="emit('action', 'focus-selected')">Focus</button>
               <button v-if="isBimProxy" class="button-secondary" type="button" @click="emit('action', 'reset-alignment')">重置对齐</button>
               <button v-if="isBimProxy" class="button-secondary" type="button" @click="emit('action', 'save-alignment')">保存对齐</button>
