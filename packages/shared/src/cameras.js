@@ -3,7 +3,6 @@ export const CAMERA_STREAM_MODES = {
 };
 
 export const CAMERA_SOURCE_TYPES = {
-  TEST_MP4: 'testMp4',
   CAMERA_STREAM: 'cameraStream',
   CUSTOM_URL: 'customUrl'
 };

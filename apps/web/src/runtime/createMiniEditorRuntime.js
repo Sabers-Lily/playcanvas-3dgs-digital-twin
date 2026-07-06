@@ -63,7 +63,6 @@ const RESTORABLE_OBJECT_TYPES = new Set([
   'routePoint'
 ]);
 const MAX_LOGS = 100;
-const DEFAULT_TEST_VIDEO_URL = '/assets/test.mp4';
 
 const BUSINESS_OBJECT_DEFINITIONS = {
   empty: {
@@ -630,7 +629,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return projection.videoUrl || '';
     }
 
-    return projection.videoUrl || DEFAULT_TEST_VIDEO_URL;
+    return projection.videoUrl || '';
   }
 
   async function refreshCameraSources() {
@@ -3411,7 +3410,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     const sourceType = options.sourceType ?? cameraObject.metadata?.videoProjection?.sourceType ?? CAMERA_SOURCE_TYPES.CAMERA_STREAM;
-    const videoUrl = options.videoUrl || cameraObject.metadata?.videoProjection?.videoUrl || DEFAULT_TEST_VIDEO_URL;
+    const videoUrl = options.videoUrl || cameraObject.metadata?.videoProjection?.videoUrl || '';
     const projection = createDefaultVideoProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
       ...options,
@@ -3892,34 +3891,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           missingMessage: `Cannot load ${ASSET_PATHS.baseSog}`
         });
         return;
-      case 'bind-test-video': {
-        const selectedId = selectionManager.getSelectedId();
-        if (!selectedId) {
-          updateStatusMessage('No selection');
-          return;
-        }
-        enableCameraVideoProjection(selectedId, {
-          sourceType: CAMERA_SOURCE_TYPES.TEST_MP4,
-          cameraId: null,
-          streamUrl: null,
-          videoUrl: DEFAULT_TEST_VIDEO_URL
-        })
-          .then(() => {
-            console.log('[Projection] resolvedVideoUrl:', DEFAULT_TEST_VIDEO_URL);
-            updateStatusMessage(`Test video bound: ${DEFAULT_TEST_VIDEO_URL}`);
-          })
-          .catch((error) => {
-            console.warn('[Projection] bind test video failed:', error);
-            updateStatusMessage(`Bind test video failed: ${describeError(error)}`);
-          });
-        return;
-      }
-      case 'refresh-camera-sources': {
-        refreshCameraSources().catch((error) => {
-          console.warn('[CameraStream] refresh failed:', error);
-        });
-        return;
-      }
       case 'start-camera-stream': {
         const cameraSourceId = payload?.cameraId;
         if (!cameraSourceId) {
@@ -4005,18 +3976,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           softEdge: readNumberValue(currentProjection.softEdge, 0)
         });
         updateStatusMessage(`${target?.displayName ?? selectedId} projection ${nextEnabled ? 'enabled' : 'disabled'}`);
-        return;
-      }
-      case 'start-four-point-calibration': {
-        startQuadVideoProjectionEditing(selectionManager.getSelectedId());
-        return;
-      }
-      case 'finish-four-point-calibration': {
-        applyQuadVideoProjection(selectionManager.getSelectedId());
-        return;
-      }
-      case 'clear-four-point-calibration': {
-        clearQuadVideoProjectionPoints(selectionManager.getSelectedId());
         return;
       }
       case 'start-quad-video-projection-editing': {
@@ -4403,9 +4362,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     setBuildingEnvelopeOpacity,
     setBuildingEnvelopeOutlineVisible,
     deleteBuildingEnvelope,
-    testVideoPreviewPlane(videoUrl = DEFAULT_TEST_VIDEO_URL) {
-      return enableCameraVideoProjection('camera_0', { videoUrl });
-    },
     loadBim,
     loadRemoteSog,
     loadSogFile

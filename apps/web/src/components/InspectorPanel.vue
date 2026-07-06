@@ -244,7 +244,7 @@ function resetVideoProjectionForm() {
   videoProjectionForm.sourceType = CAMERA_SOURCE_TYPES.CAMERA_STREAM;
   videoProjectionForm.cameraId = projection?.cameraId ?? 'camera1';
   videoProjectionForm.streamUrl = projection?.streamUrl ?? '';
-  videoProjectionForm.mode = projection?.mode ?? 'quadOverlay';
+  videoProjectionForm.mode = 'quadOverlay';
   videoProjectionForm.videoUrl = projection?.videoUrl ?? '';
   videoProjectionForm.opacity = projection?.opacity ?? 1;
   videoProjectionForm.softEdge = projection?.softEdge ?? 0;
@@ -430,19 +430,6 @@ function emitBuildingEnvelopeDisplayMode() {
     objectId: props.selection?.id,
     displayMode: buildingEnvelopeForm.displayMode
   });
-}
-
-function handleProjectionSourceTypeChange() {
-  if (videoProjectionForm.sourceType === CAMERA_SOURCE_TYPES.TEST_MP4) {
-    videoProjectionForm.videoUrl = '/assets/test.mp4';
-    videoProjectionForm.streamUrl = '';
-  }
-
-  if (videoProjectionForm.sourceType === CAMERA_SOURCE_TYPES.CAMERA_STREAM) {
-    videoProjectionForm.streamUrl = currentCameraStreamStatus.value?.absolutePlayUrl || videoProjection.value.streamUrl || '';
-  }
-
-  emitVideoProjectionPatch();
 }
 
 function handleCameraStreamSelectionChange() {
