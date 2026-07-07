@@ -3801,7 +3801,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       enabled: false
     });
     cameraProjectionManager.disableProjection(cameraId);
-    clearProjectionHelperEntities();
+    clearQuadProjectionHelpers(cameraId);
     updateStatusMessage(`Projection disabled: ${cameraId}`);
     return true;
   }

@@ -224,15 +224,11 @@ export class CameraProjectionManager {
         : instance.quadPlaneTolerance;
       instance.videoElement = options.videoElement ?? instance.videoElement;
     }
-    instance.projector?.patch({
-      enabledProjection: false,
-      quadPoints: instance.anchors,
-      opacity: instance.opacity,
-      softEdge: instance.softEdge,
-      flipY: instance.flipY,
-      replaceMode: instance.replaceMode,
-      quadPlaneTolerance: instance.quadPlaneTolerance
-    });
+    instance.projector?.destroy();
+    instance.projector = null;
+    instance.material = null;
+    instance.videoTexture = null;
+    instance.hasLoggedTextureUpdate = false;
     instance.lastUpdatedAt = Date.now();
 
     console.log(`${this.logPrefix} disable projection ${cameraObjectId}`);
@@ -247,13 +243,11 @@ export class CameraProjectionManager {
 
     instance.enabled = false;
     instance.anchors = [];
+    instance.videoElement = null;
+    instance.projector?.destroy();
+    instance.projector = null;
     instance.material = null;
     instance.videoTexture = null;
-    instance.videoElement = null;
-    instance.projector?.patch({
-      enabledProjection: false,
-      quadPoints: []
-    });
     instance.hasLoggedTextureUpdate = false;
     instance.lastUpdatedAt = Date.now();
 
@@ -267,7 +261,7 @@ export class CameraProjectionManager {
       return false;
     }
 
-    instance.projector?.dispose();
+    instance.projector?.destroy();
     this.instances.delete(cameraObjectId);
     console.log(`${this.logPrefix} dispose projection ${cameraObjectId}`);
     return true;
