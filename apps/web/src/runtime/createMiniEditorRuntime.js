@@ -871,6 +871,41 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
   }
 
+  async function ensureProjectionVideoSource(cameraObjectId, projection = null) {
+    const cameraObject = sceneObjectManager.getObject(cameraObjectId);
+    if (!cameraObject || cameraObject.type !== 'cameraDevice') {
+      return null;
+    }
+
+    const currentProjection = createDefaultVideoProjectionMetadata(
+      cameraObjectId,
+      projection ?? cameraObject.metadata?.videoProjection
+    );
+
+    if (currentProjection.sourceType !== CAMERA_SOURCE_TYPES.CAMERA_STREAM) {
+      return currentProjection;
+    }
+
+    if (currentProjection.streamUrl || currentProjection.videoUrl) {
+      return currentProjection;
+    }
+
+    const cameraSourceId = currentProjection.cameraId ?? 'camera1';
+    const bound = await bindCameraStreamToProjection(cameraObjectId, cameraSourceId);
+    if (!bound) {
+      console.warn('[VideoProjection] ensure source failed: bind camera stream failed', {
+        cameraObjectId,
+        cameraSourceId
+      });
+      return null;
+    }
+
+    return createDefaultVideoProjectionMetadata(
+      cameraObjectId,
+      sceneObjectManager.getObject(cameraObjectId)?.metadata?.videoProjection
+    );
+  }
+
   function syncCameraProjectionMetadata(cameraId, patch = {}) {
     const target = sceneObjectManager.getObject(cameraId);
     if (!target || target.type !== 'cameraDevice') {
@@ -3709,7 +3744,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     const sourceType = options.sourceType ?? cameraObject.metadata?.videoProjection?.sourceType ?? CAMERA_SOURCE_TYPES.CAMERA_STREAM;
     const videoUrl = options.videoUrl || cameraObject.metadata?.videoProjection?.videoUrl || '';
-    const projection = createDefaultVideoProjectionMetadata(cameraId, {
+    let projection = createDefaultVideoProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
       ...options,
       enabled: true,
@@ -3725,6 +3760,21 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       quadPoints: options.quadPoints ?? cameraObject.metadata?.videoProjection?.quadPoints ?? [],
       quadPlaneTolerance: readNumberValue(options.quadPlaneTolerance, cameraObject.metadata?.videoProjection?.quadPlaneTolerance ?? 0.25)
     });
+
+    const resolvedProjection = await ensureProjectionVideoSource(cameraId, projection);
+    if (!resolvedProjection) {
+      updateStatusMessage(`Projection enable failed: missing stream binding for ${projection.cameraId ?? 'camera1'}`);
+      return {
+        cameraId,
+        projector: projection,
+        error: 'STREAM_NOT_BOUND'
+      };
+    }
+    projection = createDefaultVideoProjectionMetadata(cameraId, {
+      ...projection,
+      ...resolvedProjection
+    });
+
     syncCameraProjectionMetadata(cameraId, projection);
     updateActiveProjectorFromProjection(cameraId, projection);
 
@@ -3849,9 +3899,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return true;
   }
 
-  function applyQuadVideoProjection(cameraId) {
+  async function applyQuadVideoProjection(cameraId) {
     const cameraObject = sceneObjectManager.getObject(cameraId);
-    const projection = cameraObject?.metadata?.videoProjection;
+    let projection = createDefaultVideoProjectionMetadata(cameraId, cameraObject?.metadata?.videoProjection);
     if (!cameraObject || cameraObject.type !== 'cameraDevice') {
       updateStatusMessage('Camera device not found');
       return false;
@@ -3861,6 +3911,16 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       updateStatusMessage('四点区域投影需要 4 个点');
       return false;
     }
+
+    const resolvedProjection = await ensureProjectionVideoSource(cameraId, projection);
+    if (!resolvedProjection) {
+      updateStatusMessage(`四点投影失败：请先绑定摄像头流 ${projection.cameraId ?? 'camera1'}`);
+      return false;
+    }
+    projection = createDefaultVideoProjectionMetadata(cameraId, {
+      ...projection,
+      ...resolvedProjection
+    });
 
     updateCameraVideoProjection(cameraId, {
       ...projection,
@@ -4289,15 +4349,27 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           return;
         }
 
+        if (nextEnabled) {
+          enableCameraVideoProjection(selectedId, {
+            ...currentProjection,
+            enabled: true,
+            mode: currentProjection.mode === 'quad' ? 'quad' : 'quadOverlay',
+            replaceMode: currentProjection.replaceMode ?? true,
+            opacity: readNumberValue(currentProjection.opacity, 1),
+            softEdge: readNumberValue(currentProjection.softEdge, 0)
+          });
+          return;
+        }
+
         updateCameraVideoProjection(selectedId, {
           ...currentProjection,
-          enabled: nextEnabled,
+          enabled: false,
           mode: currentProjection.mode === 'quad' ? 'quad' : 'quadOverlay',
           replaceMode: currentProjection.replaceMode ?? true,
           opacity: readNumberValue(currentProjection.opacity, 1),
           softEdge: readNumberValue(currentProjection.softEdge, 0)
         });
-        updateStatusMessage(`${target?.displayName ?? selectedId} projection ${nextEnabled ? 'enabled' : 'disabled'}`);
+        updateStatusMessage(`${target?.displayName ?? selectedId} projection disabled`);
         return;
       }
       case 'start-quad-video-projection-editing': {

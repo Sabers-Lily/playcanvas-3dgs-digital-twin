@@ -111,6 +111,14 @@ export class CameraProjectionManager {
     const nextProjectorEntity = this.getProjectorEntity(cameraObjectId) ?? null;
     const previousVideoElement = instance.videoElement;
     const previousFlipY = instance.flipY;
+    const canRenderProjection = Boolean(
+      nextEnabled &&
+      anchors.length === 4 &&
+      nextVideoElement &&
+      nextGsplatEntity &&
+      nextMainCameraEntity &&
+      nextProjectorEntity
+    );
 
     instance.cameraId = nextCameraId;
     instance.videoRuntimeId = nextCameraId;
@@ -129,7 +137,7 @@ export class CameraProjectionManager {
       instance.anchors = anchors;
     }
 
-    if (!instance.projector) {
+    if (canRenderProjection && !instance.projector) {
       instance.projector = new GsplatMp4ProjectorAdapter({
         app: this.app,
         gsplatEntity: nextGsplatEntity,
@@ -149,7 +157,7 @@ export class CameraProjectionManager {
       instance.projector.initialize();
     }
 
-    instance.projector.patch({
+    instance.projector?.patch({
       gsplatEntity: nextGsplatEntity,
       mainCameraEntity: nextMainCameraEntity,
       projectorEntity: nextProjectorEntity,
@@ -164,7 +172,7 @@ export class CameraProjectionManager {
       enabledProjection: nextEnabled
     });
 
-    if (!nextEnabled || anchors.length !== 4 || !nextVideoElement || !nextGsplatEntity || !nextMainCameraEntity || !nextProjectorEntity) {
+    if (!canRenderProjection) {
       this.disableProjection(cameraObjectId, {
         updateState: true,
         enabled: nextEnabled,
