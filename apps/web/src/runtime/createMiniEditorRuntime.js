@@ -100,7 +100,7 @@ const RESTORABLE_OBJECT_TYPES = new Set([
   'routePoint'
 ]);
 const MAX_LOGS = 100;
-const MAX_ACTIVE_RENDER_PROJECTIONS = 1;
+const MAX_ACTIVE_RENDER_PROJECTIONS = 4;
 
 const BUSINESS_OBJECT_DEFINITIONS = {
   empty: {
@@ -712,26 +712,14 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
   });
   const gsplatProjectionRenderer = new GsplatProjectionRenderer({
+    app,
+    getGsplatEntity: () => currentGsplatEntity,
+    getMainCameraEntity: () => camera,
+    getProjectorEntity: (objectId) => sceneObjectManager.getObject(objectId)?.entity ?? null,
     projectionRegistry: projectionConfigRegistry,
     sourceRegistry: cameraSourceRegistry,
     runtimePool: cameraSourceRuntimePool,
-    async activateProjection({ objectId }) {
-      const target = sceneObjectManager.getObject(objectId);
-      if (!target || target.type !== 'cameraDevice') {
-        return false;
-      }
-
-      console.log('[ProjectionGoldenPath] enable', {
-        objectId,
-        cameraId: target.metadata?.videoProjection?.cameraId ?? null
-      });
-      syncProjectionInstanceForCamera(objectId, target.metadata?.videoProjection);
-      return true;
-    },
-    deactivateProjection({ objectId }) {
-      cameraProjectionManager.disableProjection(objectId);
-      return true;
-    }
+    maxSlots: MAX_ACTIVE_RENDER_PROJECTIONS
   });
   const projectionDiagnostics = new ProjectionDiagnostics({
     sourceRegistry: cameraSourceRegistry,
@@ -1008,24 +996,19 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       projection ?? cameraObject.metadata?.videoProjection
     );
 
-    cameraProjectionManager.syncProjection(cameraId, nextProjection);
+    syncProjectionArchitectureFromSceneObjects();
     return nextProjection;
   }
 
   function syncAllCameraProjectionInstances() {
-    const activeCameraIds = new Set();
-
-    sceneObjectManager.getObjects()
-      .filter((object) => object.type === 'cameraDevice')
-      .forEach((cameraObject) => {
-        activeCameraIds.add(cameraObject.id);
-        syncProjectionInstanceForCamera(cameraObject.id, cameraObject.metadata?.videoProjection);
-      });
-
-    Array.from(cameraProjectionManager.instances.keys()).forEach((cameraObjectId) => {
-      if (!activeCameraIds.has(cameraObjectId)) {
-        cameraProjectionManager.disposeProjection(cameraObjectId);
-      }
+    syncProjectionArchitectureFromSceneObjects();
+    projectionScheduler.evaluate({
+      projectionConfigs: projectionConfigRegistry.getAll(),
+      sourceRegistry: cameraSourceRegistry,
+      runtimePool: cameraSourceRuntimePool
+    });
+    gsplatProjectionRenderer.syncActiveSet(projectionScheduler.getActiveSet()).catch((error) => {
+      console.warn('[Projection] renderer sync failed:', error);
     });
   }
 
@@ -4826,7 +4809,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       }
     });
 
-    cameraProjectionManager.update();
+    gsplatProjectionRenderer.update();
     robotDogPatrolController.update(dt ?? 0);
     refreshTransformGizmo();
     transformGizmo.update();
