@@ -19,6 +19,14 @@ import { SelectionManager } from '../editor/SelectionManager.js';
 import { UI_FLAGS } from '../config/uiFlags.js';
 import { resolveApiUrl } from '../config/apiConfig.js';
 import { CAMERA_SOURCE_TYPES, CAMERA_STREAM_STATUSES } from '../../../../packages/shared/src/cameras.js';
+import { CameraSourceRegistry } from './projection/CameraSourceRegistry.js';
+import { CameraSourceRuntimePool } from './projection/CameraSourceRuntimePool.js';
+import { ProjectionConfigRegistry } from './projection/ProjectionConfigRegistry.js';
+import { ProjectionConfigCompatibilityAdapter } from './projection/ProjectionConfigCompatibilityAdapter.js';
+import { ProjectionEditingController } from './projection/ProjectionEditingController.js';
+import { ProjectionScheduler } from './projection/ProjectionScheduler.js';
+import { GsplatProjectionRenderer } from './projection/GsplatProjectionRenderer.js';
+import { ProjectionDiagnostics } from './projection/ProjectionDiagnostics.js';
 
 const OBJECT_IDS = {
   camera: 'camera',
@@ -92,6 +100,7 @@ const RESTORABLE_OBJECT_TYPES = new Set([
   'routePoint'
 ]);
 const MAX_LOGS = 100;
+const MAX_ACTIVE_RENDER_PROJECTIONS = 1;
 
 const BUSINESS_OBJECT_DEFINITIONS = {
   empty: {
@@ -663,6 +672,24 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   const quadProjectionHelpers = new Map();
   const cameraStreamStatuses = new Map();
   const cameraVideoRuntimes = new Map();
+  const cameraSourceRegistry = new CameraSourceRegistry();
+  const cameraSourceRuntimePool = new CameraSourceRuntimePool({
+    RuntimeClass: CameraVideoRuntime
+  });
+  const projectionConfigRegistry = new ProjectionConfigRegistry();
+  const projectionCompatibilityAdapter = new ProjectionConfigCompatibilityAdapter({
+    sceneObjectManager,
+    createDefaultVideoProjectionMetadata,
+    sourceRegistry: cameraSourceRegistry,
+    projectionRegistry: projectionConfigRegistry
+  });
+  const projectionEditingController = new ProjectionEditingController({
+    projectionRegistry: projectionConfigRegistry,
+    compatibilityAdapter: projectionCompatibilityAdapter
+  });
+  const projectionScheduler = new ProjectionScheduler({
+    maxActive: MAX_ACTIVE_RENDER_PROJECTIONS
+  });
   let lastCameraVideoRuntimeEmitAt = 0;
   const quadHelperMaterial = new pc.StandardMaterial();
   quadHelperMaterial.diffuse = new pc.Color(0.1, 0.85, 1);
@@ -684,14 +711,54 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return sceneObjectManager.getObject(cameraObjectId)?.entity ?? null;
     }
   });
+  const gsplatProjectionRenderer = new GsplatProjectionRenderer({
+    projectionRegistry: projectionConfigRegistry,
+    sourceRegistry: cameraSourceRegistry,
+    runtimePool: cameraSourceRuntimePool,
+    async activateProjection({ objectId }) {
+      const target = sceneObjectManager.getObject(objectId);
+      if (!target || target.type !== 'cameraDevice') {
+        return false;
+      }
+
+      console.log('[ProjectionGoldenPath] enable', {
+        objectId,
+        cameraId: target.metadata?.videoProjection?.cameraId ?? null
+      });
+      syncProjectionInstanceForCamera(objectId, target.metadata?.videoProjection);
+      return true;
+    },
+    deactivateProjection({ objectId }) {
+      cameraProjectionManager.disableProjection(objectId);
+      return true;
+    }
+  });
+  const projectionDiagnostics = new ProjectionDiagnostics({
+    sourceRegistry: cameraSourceRegistry,
+    runtimePool: cameraSourceRuntimePool,
+    projectionRegistry: projectionConfigRegistry,
+    scheduler: projectionScheduler,
+    renderer: gsplatProjectionRenderer
+  });
 
   function buildCameraStreamsSnapshot() {
     return {
       cameras: state.cameraStreams.cameras.map((cameraSource) => ({ ...cameraSource })),
       statuses: Object.fromEntries(Array.from(cameraStreamStatuses.entries()).map(([cameraId, status]) => [cameraId, { ...status }])),
       projectionRuntimes: Object.fromEntries(Array.from(cameraVideoRuntimes.entries()).map(([cameraObjectId, runtime]) => [cameraObjectId, runtime.getState()])),
+      projectionDiagnostics: Object.fromEntries(
+        projectionConfigRegistry.getAll().map((config) => [config.objectId, projectionDiagnostics.getProjectionDiagnostics(config.id)])
+      ),
       apiStatus: state.cameraStreams.apiStatus
     };
+  }
+
+  function syncProjectionArchitectureFromSceneObjects() {
+    sceneObjectManager.getObjects()
+      .filter((sceneObject) => sceneObject.type === 'cameraDevice')
+      .forEach((sceneObject) => {
+        projectionCompatibilityAdapter.hydrateSceneObject(sceneObject);
+      });
   }
 
   function setCameraStreamStatus(cameraId, patch = {}) {
@@ -710,6 +777,17 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   }
 
   function getOrCreateCameraVideoRuntime(cameraObjectId) {
+    syncProjectionArchitectureFromSceneObjects();
+    const sourceId = projectionCompatibilityAdapter.getSourceIdForObject(cameraObjectId);
+    const sourceConfig = cameraSourceRegistry.get(sourceId);
+    if (sourceConfig) {
+      const entry = cameraSourceRuntimePool.acquire(sourceConfig, `legacy:${cameraObjectId}`);
+      if (entry?.runtime) {
+        cameraVideoRuntimes.set(cameraObjectId, entry.runtime);
+        return entry.runtime;
+      }
+    }
+
     const existingRuntime = cameraVideoRuntimes.get(cameraObjectId);
     if (existingRuntime) {
       return existingRuntime;
@@ -728,7 +806,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
-    runtime.destroy();
+    const sourceId = projectionCompatibilityAdapter.getSourceIdForObject(cameraObjectId);
+    cameraSourceRuntimePool.release(sourceId, `legacy:${cameraObjectId}`);
     cameraVideoRuntimes.delete(cameraObjectId);
     return true;
   }
@@ -912,17 +991,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return null;
     }
 
-    const nextProjection = createDefaultVideoProjectionMetadata(cameraId, {
-      ...target.metadata?.videoProjection,
-      ...patch
-    });
-
-    sceneObjectManager.updateObject(cameraId, {
-      metadata: {
-        ...target.metadata,
-        videoProjection: nextProjection
-      }
-    });
+    const nextProjection = projectionCompatibilityAdapter.updateProjectionForObject(cameraId, patch);
+    syncProjectionArchitectureFromSceneObjects();
 
     return nextProjection;
   }
@@ -1091,6 +1161,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    projectionEditingController.clear(projectionCompatibilityAdapter.getProjectionIdForObject(cameraId));
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
       enabled: false,
@@ -1116,8 +1187,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       replaceMode: projection.replaceMode,
       quadPoints: projection.quadPoints?.length ?? 0
     });
-
-    syncProjectionInstanceForCamera(cameraId, projection);
+    syncProjectionArchitectureFromSceneObjects();
+    projectionScheduler.evaluate({
+      projectionConfigs: projectionConfigRegistry.getAll(),
+      sourceRegistry: cameraSourceRegistry,
+      runtimePool: cameraSourceRuntimePool
+    });
+    gsplatProjectionRenderer.syncActiveSet(projectionScheduler.getActiveSet()).catch((error) => {
+      console.warn('[Projection] renderer sync failed:', error);
+    });
   }
 
   function getCurrentSplatState() {
@@ -1143,6 +1221,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     window.placementMode = placementMode;
     window.cameraProjectionManager = cameraProjectionManager;
     window.cameraVideoRuntimes = cameraVideoRuntimes;
+    window.cameraSourceRegistry = cameraSourceRegistry;
+    window.cameraSourceRuntimePool = cameraSourceRuntimePool;
+    window.projectionConfigRegistry = projectionConfigRegistry;
+    window.projectionScheduler = projectionScheduler;
+    window.gsplatProjectionRenderer = gsplatProjectionRenderer;
+    window.projectionDiagnostics = projectionDiagnostics;
     window.createRobotDog = createRobotDog;
     window.startRobotDogRouteEditing = startRobotDogRouteEditing;
     window.startRobotDogPatrol = startRobotDogPatrol;
@@ -3161,6 +3245,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   function clearSceneForProjectOpen() {
     clearRestorableSceneObjects();
+    gsplatProjectionRenderer.destroy();
     cameraProjectionManager.disposeAll();
     Array.from(cameraVideoRuntimes.keys()).forEach((cameraObjectId) => {
       disposeCameraVideoRuntime(cameraObjectId);
@@ -3653,8 +3738,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     if (object.type === 'cameraDevice') {
+      gsplatProjectionRenderer.deactivate(projectionCompatibilityAdapter.getProjectionIdForObject(object.id));
       cameraProjectionManager.disposeProjection(object.id);
       disposeCameraVideoRuntime(object.id);
+      projectionCompatibilityAdapter.removeObject(object.id);
       clearQuadProjectionHelpers(object.id);
     }
 
@@ -3867,6 +3954,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     clearBuildingEnvelopeHover();
     selectionManager.select(cameraId);
+    projectionEditingController.start(projectionCompatibilityAdapter.getProjectionIdForObject(cameraId));
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
       enabled: false,
@@ -3890,6 +3978,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
+    projectionEditingController.stop();
     syncCameraProjectionMetadata(cameraId, {
       ...cameraObject.metadata?.videoProjection,
       quadEditing: false
@@ -3922,6 +4011,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       ...resolvedProjection
     });
 
+    projectionEditingController.apply(projectionCompatibilityAdapter.getProjectionIdForObject(cameraId));
     updateCameraVideoProjection(cameraId, {
       ...projection,
       enabled: true,
@@ -4395,8 +4485,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           return;
         }
         const target = sceneObjectManager.getObject(selectedId);
+        const currentEnabled = target?.metadata?.videoProjection?.enabled ?? false;
         const nextProjection = syncCameraProjectionMetadata(selectedId, {
           ...(payload ?? {}),
+          enabled: payload && Object.prototype.hasOwnProperty.call(payload, 'enabled')
+            ? payload.enabled
+            : currentEnabled,
           mode: payload?.mode === 'cameraFrustum'
             ? 'cameraFrustum'
             : (payload?.mode === 'quad' ? 'quad' : 'quadOverlay'),
@@ -4594,6 +4688,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       canvas.style.cursor = 'default';
     }
     selectableObjectController.refreshAllVisualStates();
+    syncProjectionArchitectureFromSceneObjects();
     emitState();
   });
 
@@ -4620,6 +4715,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     if (!transformEditState.enabled) {
       syncTransformEditStatusMessage();
     }
+    syncProjectionArchitectureFromSceneObjects();
     refreshTransformGizmo();
     emitState();
   });
@@ -4720,7 +4816,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   app.on('update', (dt) => {
     let shouldEmitCameraRuntimeState = false;
-    cameraVideoRuntimes.forEach((runtime) => {
+    const runtimesToUpdate = new Set([
+      ...cameraVideoRuntimes.values(),
+      ...cameraSourceRuntimePool.getEntries().map((entry) => entry.runtime)
+    ]);
+    runtimesToUpdate.forEach((runtime) => {
       if (runtime.update()) {
         shouldEmitCameraRuntimeState = true;
       }
@@ -4750,6 +4850,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   refreshCameraSources().catch((error) => {
     console.warn('[CameraStream] initial refresh failed:', error);
   });
+  syncProjectionArchitectureFromSceneObjects();
   updateDebugHandles();
   resizeViewport();
   flushState();

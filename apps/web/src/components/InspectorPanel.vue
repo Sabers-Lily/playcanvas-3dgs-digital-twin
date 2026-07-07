@@ -460,7 +460,9 @@ function emitBuildingEnvelopeDisplayMode() {
 
 function handleCameraStreamSelectionChange() {
   videoProjectionForm.streamUrl = currentCameraStreamStatus.value?.absolutePlayUrl || videoProjection.value.streamUrl || '';
-  emitVideoProjectionPatch();
+  emitVideoProjectionPatch({
+    enabled: videoProjection.value.enabled ?? videoProjectionForm.enabled
+  });
   emit('action', 'bind-camera-stream', {
     cameraId: videoProjectionForm.cameraId
   });

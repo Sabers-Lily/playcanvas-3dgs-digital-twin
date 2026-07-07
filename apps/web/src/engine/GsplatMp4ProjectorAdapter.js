@@ -239,6 +239,10 @@ export class GsplatMp4ProjectorAdapter {
   }
 
   initialize() {
+    // PROJECTION_GOLDEN_PATH:
+    // This adapter contains the currently verified 3DGS video projection path.
+    // Architecture layers may call it, but this loop must not rewrite its
+    // shader math, quad mapping, texture binding, or upload behavior.
     this.bindVideoElement(this.externalVideoElement);
     this.createVideoTexture();
     this.installGsplatMaterialChunk();
