@@ -6,16 +6,19 @@ const ROUTE_STATE_READY = 'ready';
 const ROUTE_STATE_RUNNING = 'running';
 const ROUTE_STATE_PAUSED = 'paused';
 const ROUTE_STATE_FINISHED = 'finished';
+const PATROL_DIRECTION_FORWARD = 1;
+const PATROL_DIRECTION_BACKWARD = -1;
 
 const DEFAULT_PATROL = Object.freeze({
   routeEditing: false,
   routePoints: [],
   routeClosed: false,
   speed: 2,
-  loop: false,
+  loop: true,
   state: ROUTE_STATE_IDLE,
   currentSegmentIndex: 0,
   progress: 0,
+  segmentDirection: PATROL_DIRECTION_FORWARD,
   modelYawOffset: 0
 });
 
@@ -47,6 +50,10 @@ function cloneTransform(transform = {}) {
 
 function formatWaypoint(point) {
   return `x=${point.x.toFixed(2)}, y=${point.y.toFixed(2)}, z=${point.z.toFixed(2)}`;
+}
+
+function getNextRouteIndex(patrol) {
+  return patrol.currentSegmentIndex + (patrol.segmentDirection ?? PATROL_DIRECTION_FORWARD);
 }
 
 export class RobotDogPatrolController {
@@ -256,6 +263,7 @@ export class RobotDogPatrolController {
     patrol.state = ROUTE_STATE_EDITING;
     patrol.currentSegmentIndex = 0;
     patrol.progress = 0;
+    patrol.segmentDirection = PATROL_DIRECTION_FORWARD;
 
     this.editingRobotDogId = robotDogId;
     this.updatePatrol(robotDogId, patrol);
@@ -274,6 +282,7 @@ export class RobotDogPatrolController {
     patrol.state = patrol.routePoints.length >= 2 ? ROUTE_STATE_READY : ROUTE_STATE_IDLE;
     patrol.currentSegmentIndex = 0;
     patrol.progress = 0;
+    patrol.segmentDirection = PATROL_DIRECTION_FORWARD;
 
     if (this.editingRobotDogId === robotDogId) {
       this.editingRobotDogId = null;
@@ -325,6 +334,7 @@ export class RobotDogPatrolController {
     patrol.state = ROUTE_STATE_IDLE;
     patrol.currentSegmentIndex = 0;
     patrol.progress = 0;
+    patrol.segmentDirection = PATROL_DIRECTION_FORWARD;
 
     if (this.editingRobotDogId === robotDogId) {
       this.editingRobotDogId = null;
@@ -351,6 +361,7 @@ export class RobotDogPatrolController {
     patrol.state = ROUTE_STATE_RUNNING;
     patrol.currentSegmentIndex = 0;
     patrol.progress = 0;
+    patrol.segmentDirection = PATROL_DIRECTION_FORWARD;
     this.editingRobotDogId = null;
 
     const firstPoint = toVec3(patrol.routePoints[0].position);
@@ -408,6 +419,7 @@ export class RobotDogPatrolController {
     patrol.state = patrol.routePoints.length >= 2 ? ROUTE_STATE_READY : ROUTE_STATE_IDLE;
     patrol.currentSegmentIndex = 0;
     patrol.progress = 0;
+    patrol.segmentDirection = PATROL_DIRECTION_FORWARD;
 
     if (patrol.routePoints[0] && robotDog.entity) {
       const firstPoint = toVec3(patrol.routePoints[0].position);
@@ -442,6 +454,38 @@ export class RobotDogPatrolController {
     const patrol = clonePatrol(robotDog.metadata?.patrol);
     patrol.loop = Boolean(loop);
     this.updatePatrol(robotDogId, patrol);
+    return true;
+  }
+
+  advancePatrolSegment(robotDogId, patrol) {
+    const routePointCount = patrol.routePoints.length;
+    if (routePointCount < 2) {
+      this.finishPatrol(robotDogId, patrol);
+      return false;
+    }
+
+    const direction = patrol.segmentDirection ?? PATROL_DIRECTION_FORWARD;
+    const reachedIndex = getNextRouteIndex(patrol);
+
+    patrol.currentSegmentIndex = reachedIndex;
+    patrol.progress = 0;
+
+    if (direction === PATROL_DIRECTION_FORWARD && reachedIndex >= routePointCount - 1) {
+      patrol.segmentDirection = PATROL_DIRECTION_BACKWARD;
+      return true;
+    }
+
+    if (direction === PATROL_DIRECTION_BACKWARD && reachedIndex <= 0) {
+      if (patrol.loop) {
+        patrol.segmentDirection = PATROL_DIRECTION_FORWARD;
+        return true;
+      }
+
+      this.finishPatrol(robotDogId, patrol);
+      return false;
+    }
+
+    patrol.segmentDirection = direction;
     return true;
   }
 
@@ -493,7 +537,7 @@ export class RobotDogPatrolController {
         }
 
         const currentIndex = patrol.currentSegmentIndex;
-        const nextIndex = currentIndex + 1;
+        const nextIndex = getNextRouteIndex(patrol);
         const currentPoint = patrol.routePoints[currentIndex];
         const nextPoint = patrol.routePoints[nextIndex];
 
@@ -508,8 +552,9 @@ export class RobotDogPatrolController {
         const distance = direction.length();
 
         if (distance <= 0.0001) {
-          patrol.currentSegmentIndex += 1;
-          patrol.progress = 0;
+          if (!this.advancePatrolSegment(robotDog.id, patrol)) {
+            return;
+          }
           this.updatePatrol(robotDog.id, patrol, {
             status: 'running',
             refreshVisuals: false
@@ -525,17 +570,8 @@ export class RobotDogPatrolController {
         this.syncRobotTransform(robotDog.id);
 
         if (patrol.progress >= 1) {
-          if (nextIndex >= patrol.routePoints.length - 1) {
-            if (patrol.loop) {
-              patrol.currentSegmentIndex = 0;
-              patrol.progress = 0;
-            } else {
-              this.finishPatrol(robotDog.id, patrol);
-              return;
-            }
-          } else {
-            patrol.currentSegmentIndex += 1;
-            patrol.progress = 0;
+          if (!this.advancePatrolSegment(robotDog.id, patrol)) {
+            return;
           }
         }
 
@@ -551,6 +587,7 @@ export class RobotDogPatrolController {
     patrol.routeEditing = false;
     patrol.state = ROUTE_STATE_FINISHED;
     patrol.progress = 1;
+    patrol.segmentDirection = PATROL_DIRECTION_FORWARD;
     this.updatePatrol(robotDogId, patrol, { status: 'finished' });
     this.onLog(`[RobotDogPatrol] patrol finished: robotDogId=${robotDogId}`);
   }
