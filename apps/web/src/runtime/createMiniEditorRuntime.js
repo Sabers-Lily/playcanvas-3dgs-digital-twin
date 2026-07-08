@@ -28,6 +28,7 @@ import { ProjectionScheduler } from './projection/ProjectionScheduler.js';
 import { GsplatProjectionRenderer } from './projection/GsplatProjectionRenderer.js';
 import { ProjectionDiagnostics } from './projection/ProjectionDiagnostics.js';
 import { ObjectMarkerManager } from './markers/ObjectMarkerManager.js';
+import { RobotRouteOverlayManager } from './robotdog/RobotRouteOverlayManager.js';
 
 const OBJECT_IDS = {
   camera: 'camera',
@@ -570,6 +571,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return handleHierarchySelect(objectId);
     }
   });
+  const robotRouteOverlayManager = new RobotRouteOverlayManager({
+    cameraEntity: camera,
+    canvas,
+    viewportElement,
+    sceneObjectManager,
+    selectionManager
+  });
 
   cameraController.setDefaultFocus({
     target: new pc.Vec3(0, 0, 0),
@@ -655,6 +663,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       apiStatus: 'idle'
     },
     objectMarkers: [],
+    robotRouteOverlays: [],
     uploadedAssets: [],
     statusMessage: 'Ready',
     statusSummary: {
@@ -1378,6 +1387,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   function buildRuntimeSnapshot() {
     objectMarkerManager.update();
+    robotRouteOverlayManager.update();
     state.objects = sceneObjectManager.getObjectSnapshots();
     state.selectedId = selectionManager.getSelectedId();
     state.selectedObject = selectionManager.getSelectedSnapshot();
@@ -1386,6 +1396,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     state.assets = buildAssetsSnapshot();
     state.cameraStreams = buildCameraStreamsSnapshot();
     state.objectMarkers = objectMarkerManager.getMarkerViewModels();
+    state.robotRouteOverlays = robotRouteOverlayManager.getOverlayModels();
     state.statusMessage = statusState.message;
     state.statusSummary = {
       sog: statusState.sog.detail,
@@ -1405,6 +1416,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       assets: state.assets,
       cameraStreams: state.cameraStreams,
       objectMarkers: state.objectMarkers,
+      robotRouteOverlays: state.robotRouteOverlays,
       statusMessage: state.statusMessage,
       statusSummary: { ...state.statusSummary },
       transformEdit: state.transformEdit,
@@ -4830,6 +4842,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     refreshTransformGizmo();
     transformGizmo.update();
     const markersChanged = objectMarkerManager.update();
+    const routeOverlaysChanged = robotRouteOverlayManager.update();
 
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     if (shouldEmitCameraRuntimeState && now - lastCameraVideoRuntimeEmitAt > 250) {
@@ -4838,7 +4851,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return;
     }
 
-    if (markersChanged) {
+    if (markersChanged || routeOverlaysChanged) {
       emitState();
     }
   });

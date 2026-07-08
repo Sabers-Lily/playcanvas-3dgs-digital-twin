@@ -313,6 +313,109 @@ input[type='checkbox'] {
   pointer-events: none;
 }
 
+.robot-route-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 16;
+  pointer-events: none;
+}
+
+.robot-route-overlay__svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.robot-route-overlay__route {
+  --route-main: #4fd1ff;
+  --route-outline: rgba(8, 15, 30, 0.88);
+  --route-point: #dff7ff;
+  --route-point-text: #0b1220;
+  --route-width: 4px;
+  --route-outline-width: 8px;
+}
+
+.robot-route-overlay__route.is-selected {
+  --route-main: #8ae7ff;
+  --route-width: 5px;
+  --route-outline-width: 9px;
+}
+
+.robot-route-overlay__route.is-editing {
+  --route-main: #ffd166;
+  --route-point: #fff0b8;
+  --route-width: 6px;
+  --route-outline-width: 10px;
+}
+
+.robot-route-overlay__route.is-running {
+  --route-main: #22c55e;
+  --route-point: #d9ffe3;
+}
+
+.robot-route-overlay__route.is-paused {
+  --route-main: #f59e0b;
+}
+
+.robot-route-overlay__route.is-finished {
+  --route-main: #c084fc;
+}
+
+.robot-route-overlay__line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.robot-route-overlay__line--outline {
+  stroke: var(--route-outline);
+  stroke-width: var(--route-outline-width);
+  opacity: 0.92;
+}
+
+.robot-route-overlay__line--main {
+  stroke: var(--route-main);
+  stroke-width: var(--route-width);
+  filter: drop-shadow(0 0 10px rgba(79, 209, 255, 0.18));
+}
+
+.robot-route-overlay__waypoint {
+  pointer-events: none;
+}
+
+.robot-route-overlay__waypoint-ring {
+  fill: rgba(8, 15, 30, 0.88);
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 2px;
+}
+
+.robot-route-overlay__waypoint-core {
+  fill: var(--route-main);
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 2px;
+}
+
+.robot-route-overlay__waypoint.is-start .robot-route-overlay__waypoint-core {
+  fill: #22c55e;
+}
+
+.robot-route-overlay__waypoint.is-current .robot-route-overlay__waypoint-ring {
+  stroke: rgba(255, 255, 255, 0.62);
+}
+
+.robot-route-overlay__waypoint.is-current .robot-route-overlay__waypoint-core {
+  fill: #ffffff;
+}
+
+.robot-route-overlay__waypoint-label {
+  fill: var(--route-point-text);
+  font-size: 10px;
+  font-weight: 700;
+  pointer-events: none;
+  user-select: none;
+}
+
 .object-marker {
   position: absolute;
   display: inline-flex;

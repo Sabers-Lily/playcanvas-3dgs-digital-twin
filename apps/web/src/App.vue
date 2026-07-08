@@ -8,6 +8,7 @@ import BottomPanel from './components/BottomPanel.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import EditModeBanner from './components/editor/EditModeBanner.vue';
 import ObjectMarkerOverlay from './components/editor/ObjectMarkerOverlay.vue';
+import RobotRouteOverlay from './components/editor/RobotRouteOverlay.vue';
 import { createMiniEditorRuntime } from './runtime/createMiniEditorRuntime.js';
 import { UI_FLAGS } from './config/uiFlags.js';
 import { fetchApiHealth } from './api/healthApi.js';
@@ -71,6 +72,7 @@ const snapshot = reactive({
     apiStatus: 'idle'
   },
   objectMarkers: [],
+  robotRouteOverlays: [],
   selectedAssetId: null,
   statusMessage: 'Ready',
   statusSummary: {
@@ -172,6 +174,13 @@ function syncSnapshot(next) {
     ? next.objectMarkers.map((marker) => ({
         ...marker,
         worldPosition: Array.isArray(marker.worldPosition) ? [...marker.worldPosition] : []
+      }))
+    : [];
+  snapshot.robotRouteOverlays = Array.isArray(next.robotRouteOverlays)
+    ? next.robotRouteOverlays.map((route) => ({
+        ...route,
+        segments: Array.isArray(route.segments) ? route.segments.map((segment) => ({ ...segment })) : [],
+        waypoints: Array.isArray(route.waypoints) ? route.waypoints.map((waypoint) => ({ ...waypoint })) : []
       }))
     : [];
   snapshot.statusMessage = next.statusMessage;
@@ -1046,6 +1055,7 @@ onBeforeUnmount(() => {
             :markers="snapshot.objectMarkers"
             @select="onObjectMarkerSelect"
           />
+          <RobotRouteOverlay :routes="snapshot.robotRouteOverlays" />
           <div
             v-if="!runtime && snapshot.statusMessage !== 'Ready'"
             class="inspector-empty"
