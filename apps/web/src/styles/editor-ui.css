@@ -158,13 +158,15 @@ input[type='checkbox'] {
 }
 
 .editor-topbar {
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: var(--space-3);
   min-height: var(--topbar-height);
   padding: 0 var(--space-4);
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   border-bottom: 1px solid var(--border-subtle);
   background: rgba(12, 17, 24, 0.94);
   backdrop-filter: blur(12px);
@@ -176,7 +178,7 @@ input[type='checkbox'] {
   gap: var(--space-2);
   min-width: 0;
   flex-wrap: nowrap;
-  overflow: hidden;
+  overflow: visible;
   flex: 1;
 }
 
@@ -209,9 +211,9 @@ input[type='checkbox'] {
 
 .toolbar-floating-menu {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   left: 0;
-  z-index: 40;
+  z-index: 30;
   display: grid;
   gap: var(--space-1);
   width: min(280px, calc(100vw - 24px));
@@ -222,6 +224,12 @@ input[type='checkbox'] {
   border-radius: var(--radius-lg);
   background: var(--bg-panel-soft);
   box-shadow: var(--shadow-float);
+}
+
+.toolbar-menu-separator {
+  height: 1px;
+  margin: 2px 0;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .toolbar-floating-menu.is-align-right {
@@ -271,6 +279,17 @@ input[type='checkbox'] {
   white-space: normal;
 }
 
+.toolbar-project-name {
+  margin-left: auto;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .viewport-panel {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
@@ -285,6 +304,122 @@ input[type='checkbox'] {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+.object-marker-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.object-marker {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 10px 0 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  pointer-events: auto;
+  transform: translate(-50%, -100%);
+  transform-origin: center bottom;
+  box-shadow: none;
+}
+
+.object-marker::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+}
+
+.object-marker:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.object-marker__icon {
+  position: relative;
+  z-index: 1;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 17, 24, 0.92);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+  font-size: 12px;
+  font-weight: 700;
+  backdrop-filter: blur(10px);
+}
+
+.object-marker__label {
+  position: relative;
+  z-index: 1;
+  max-width: 180px;
+  min-height: 24px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  background: rgba(12, 17, 24, 0.9);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+}
+
+.object-marker.is-selected .object-marker__icon,
+.object-marker.is-hovered .object-marker__icon {
+  transform: scale(1.04);
+}
+
+.object-marker--camera .object-marker__icon {
+  background: rgba(59, 130, 246, 0.2);
+  color: #d4e6ff;
+}
+
+.object-marker--annotation .object-marker__icon {
+  background: rgba(245, 158, 11, 0.2);
+  color: #ffe5b2;
+}
+
+.object-marker--empty .object-marker__icon {
+  background: rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+}
+
+.object-marker--device .object-marker__icon {
+  background: rgba(20, 184, 166, 0.2);
+  color: #c7fff8;
+}
+
+.object-marker--robot .object-marker__icon {
+  background: rgba(236, 72, 153, 0.2);
+  color: #ffd1eb;
+}
+
+.object-marker--hotspot .object-marker__icon,
+.object-marker--route .object-marker__icon,
+.object-marker--model .object-marker__icon,
+.object-marker--default .object-marker__icon {
+  background: rgba(168, 85, 247, 0.18);
+  color: #eddcff;
+}
+
+.object-marker.is-selected .object-marker__icon {
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18), 0 12px 24px rgba(0, 0, 0, 0.28);
 }
 
 #app-canvas {
@@ -710,10 +845,46 @@ input[type='checkbox'] {
   object-fit: cover;
 }
 
+.inspector-video-preview-host:empty {
+  display: none;
+}
+
 .inspector-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.projection-action-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.projection-action-group {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.projection-action-title {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.projection-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.projection-action-primary {
+  justify-self: start;
 }
 
 .button-primary,
@@ -998,11 +1169,7 @@ input[type='checkbox'] {
     width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
-  }
-
-  .toolbar-status {
-    margin-left: 0;
-    width: 100%;
+    padding-bottom: 4px;
   }
 
   .editor-layout {
@@ -1037,6 +1204,10 @@ input[type='checkbox'] {
     grid-template-columns: 1fr;
   }
 
+  .projection-action-grid {
+    grid-template-columns: 1fr;
+  }
+
   .edit-mode-banner {
     flex-direction: column;
     align-items: stretch;
@@ -1044,6 +1215,11 @@ input[type='checkbox'] {
 
   .edit-mode-actions {
     justify-content: flex-start;
+  }
+
+  .toolbar-project-name {
+    min-width: 140px;
+    margin-left: var(--space-3);
   }
 }
 .status-chip span:last-child {

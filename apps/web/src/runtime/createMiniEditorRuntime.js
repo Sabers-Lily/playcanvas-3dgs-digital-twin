@@ -27,6 +27,7 @@ import { ProjectionEditingController } from './projection/ProjectionEditingContr
 import { ProjectionScheduler } from './projection/ProjectionScheduler.js';
 import { GsplatProjectionRenderer } from './projection/GsplatProjectionRenderer.js';
 import { ProjectionDiagnostics } from './projection/ProjectionDiagnostics.js';
+import { ObjectMarkerManager } from './markers/ObjectMarkerManager.js';
 
 const OBJECT_IDS = {
   camera: 'camera',
@@ -129,8 +130,8 @@ const BUSINESS_OBJECT_DEFINITIONS = {
   },
   device: {
     idPrefix: 'device',
-    displayName: '设备',
-    typeLabel: '设备',
+    displayName: '无人设备',
+    typeLabel: '无人设备',
     businessType: 'device'
   },
   hotspot: {
@@ -558,6 +559,17 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     app,
     cameraEntity: camera
   });
+  const objectMarkerManager = new ObjectMarkerManager({
+    app,
+    cameraEntity: camera,
+    canvas,
+    viewportElement,
+    sceneObjectManager,
+    selectionManager,
+    onSelectObject(objectId) {
+      return handleHierarchySelect(objectId);
+    }
+  });
 
   cameraController.setDefaultFocus({
     target: new pc.Vec3(0, 0, 0),
@@ -642,6 +654,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       statuses: {},
       apiStatus: 'idle'
     },
+    objectMarkers: [],
     uploadedAssets: [],
     statusMessage: 'Ready',
     statusSummary: {
@@ -1364,6 +1377,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   }
 
   function buildRuntimeSnapshot() {
+    objectMarkerManager.update();
     state.objects = sceneObjectManager.getObjectSnapshots();
     state.selectedId = selectionManager.getSelectedId();
     state.selectedObject = selectionManager.getSelectedSnapshot();
@@ -1371,6 +1385,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     state.alignment = bimAlignmentManager.getCurrent();
     state.assets = buildAssetsSnapshot();
     state.cameraStreams = buildCameraStreamsSnapshot();
+    state.objectMarkers = objectMarkerManager.getMarkerViewModels();
     state.statusMessage = statusState.message;
     state.statusSummary = {
       sog: statusState.sog.detail,
@@ -1389,6 +1404,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       logs: [...state.logs],
       assets: state.assets,
       cameraStreams: state.cameraStreams,
+      objectMarkers: state.objectMarkers,
       statusMessage: state.statusMessage,
       statusSummary: { ...state.statusSummary },
       transformEdit: state.transformEdit,
@@ -4813,10 +4829,16 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     robotDogPatrolController.update(dt ?? 0);
     refreshTransformGizmo();
     transformGizmo.update();
+    const markersChanged = objectMarkerManager.update();
 
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     if (shouldEmitCameraRuntimeState && now - lastCameraVideoRuntimeEmitAt > 250) {
       lastCameraVideoRuntimeEmitAt = now;
+      emitState();
+      return;
+    }
+
+    if (markersChanged) {
       emitState();
     }
   });
@@ -4874,6 +4896,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     handleAssetSelect,
     handleInspectorAction,
     handleContextMenuAction,
+    handleObjectMarkerClick(objectId) {
+      return objectMarkerManager.onMarkerClick(objectId);
+    },
     addAssetToScene,
     toggleObjectVisibility,
     openContextMenu,

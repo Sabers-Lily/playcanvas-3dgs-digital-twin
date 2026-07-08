@@ -7,6 +7,7 @@ import InspectorPanel from './components/InspectorPanel.vue';
 import BottomPanel from './components/BottomPanel.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import EditModeBanner from './components/editor/EditModeBanner.vue';
+import ObjectMarkerOverlay from './components/editor/ObjectMarkerOverlay.vue';
 import { createMiniEditorRuntime } from './runtime/createMiniEditorRuntime.js';
 import { UI_FLAGS } from './config/uiFlags.js';
 import { fetchApiHealth } from './api/healthApi.js';
@@ -69,6 +70,7 @@ const snapshot = reactive({
     projectionRuntimes: {},
     apiStatus: 'idle'
   },
+  objectMarkers: [],
   selectedAssetId: null,
   statusMessage: 'Ready',
   statusSummary: {
@@ -166,6 +168,12 @@ function syncSnapshot(next) {
   snapshot.logs = next.logs;
   snapshot.assets = next.assets;
   snapshot.cameraStreams = normalizeCameraStreams(next.cameraStreams);
+  snapshot.objectMarkers = Array.isArray(next.objectMarkers)
+    ? next.objectMarkers.map((marker) => ({
+        ...marker,
+        worldPosition: Array.isArray(marker.worldPosition) ? [...marker.worldPosition] : []
+      }))
+    : [];
   snapshot.statusMessage = next.statusMessage;
   snapshot.statusSummary = next.statusSummary;
   snapshot.transformEdit = next.transformEdit ?? {
@@ -640,6 +648,11 @@ function onHierarchySelect(objectId) {
   runtime.value?.handleHierarchySelect(objectId);
 }
 
+function onObjectMarkerSelect(objectId) {
+  clearAssetSelection();
+  runtime.value?.handleObjectMarkerClick?.(objectId);
+}
+
 function onHierarchyToggle(objectId) {
   runtime.value?.toggleObjectVisibility(objectId);
 }
@@ -1029,6 +1042,10 @@ onBeforeUnmount(() => {
       <section class="main-area">
         <ViewportPanel ref="viewportPanelRef" :status-summary="snapshot.statusSummary">
           <EditModeBanner :mode="currentEditBanner" @action="onBannerAction" />
+          <ObjectMarkerOverlay
+            :markers="snapshot.objectMarkers"
+            @select="onObjectMarkerSelect"
+          />
           <div
             v-if="!runtime && snapshot.statusMessage !== 'Ready'"
             class="inspector-empty"

@@ -30,14 +30,10 @@ const emit = defineEmits([
 ]);
 
 const ADD_OBJECT_ITEMS = [
-  { type: 'buildingEnvelope', label: '建筑多边体' },
+  { type: 'buildingEnvelope', label: '标注' },
   { type: 'cameraDevice', label: '摄像头' },
   { type: 'empty', label: '空对象' },
-  { type: 'robotDog', label: '机器狗' },
-  { type: 'device', label: '设备' },
-  { type: 'hotspot', label: '热点' },
-  { type: 'annotation', label: '标注' },
-  { type: 'routePoint', label: '路线点' }
+  { type: 'robotDog', label: '无人设备' }
 ];
 
 const GROUP_DEFINITIONS = [

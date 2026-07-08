@@ -181,11 +181,7 @@ const patrolCanStart = computed(() => (
 ));
 const buildingEnvelope = computed(() => props.selection?.metadata?.envelope ?? null);
 const buildingEnvelopePointCount = computed(() => buildingEnvelope.value?.points?.length ?? 0);
-const transformGuideText = computed(() => (
-  isTransformEditingSelection.value
-    ? '正在编辑位置。普通拖拽：沿 XZ 平面移动。Shift + 拖拽：调整 Y 高度。Esc：取消编辑。Enter：完成编辑。'
-    : '点击“编辑位置”后可拖拽对象。普通拖拽沿 XZ 平面移动。Shift + 拖拽调整 Y 高度。Rotation / Scale 暂时通过右侧数值编辑。'
-));
+
 
 const projectionModeLabel = computed(() => {
   if (videoProjectionForm.mode === 'quad') {
@@ -232,6 +228,10 @@ const projectionRuntimeSummary = computed(() => {
     `size=${runtimeState.videoWidth ?? 0}x${runtimeState.videoHeight ?? 0}`
   ];
 });
+const shouldShowFallbackPreview = computed(() => (
+  !currentProjectionRuntime.value?.previewVideoElement &&
+  Boolean(projectionPreviewUrl.value)
+));
 
 const selectedAssetHasReadyRuntime = computed(() => (
   (['sog', 'gsplat', 'glb', 'gltf'].includes(selectedAssetType.value) && Number(props.selectedAsset?.size ?? 0) > 0) ||
@@ -595,13 +595,6 @@ onBeforeUnmount(() => {
                 <input v-model.number="transformForm.scale" type="number" step="0.01" @keydown="handleTransformKeydown" @blur="handleTransformBlur" />
               </label>
 
-              <div class="inspector-actions">
-                <button class="button-secondary" type="button" @click="emitTransform">应用</button>
-                <button class="button-secondary" type="button" @click="emit('action', 'focus-selected')">聚焦</button>
-                <button v-if="isGsplat" class="button-secondary" type="button" @click="emit('action', 'focus-map')">聚焦地图</button>
-                <button v-if="isGsplat" class="button-secondary" type="button" @click="emit('action', 'reload-base')">重载 Base SOG</button>
-              </div>
-
               <div class="inspector-note">
                 {{ transformGuideText }}
               </div>
@@ -639,21 +632,6 @@ onBeforeUnmount(() => {
 
             <div class="inspector-grid">
               <label class="inspector-field">
-                <span>视频源类型</span>
-                <input value="后端摄像头流" type="text" readonly />
-              </label>
-            </div>
-
-            <div class="inspector-grid">
-              <label class="inspector-field">
-                <span>摄像头</span>
-                <select v-model="videoProjectionForm.cameraId" @change="handleCameraStreamSelectionChange">
-                  <option v-for="camera in cameraOptions" :key="camera.id" :value="camera.id">
-                    {{ camera.id }} / {{ camera.name }}
-                  </option>
-                </select>
-              </label>
-              <label class="inspector-field">
                 <span>HLS 地址</span>
                 <input :value="projectionPreviewUrl" type="text" readonly />
               </label>
@@ -663,34 +641,43 @@ onBeforeUnmount(() => {
               <div class="inspector-field">
                 <span>视频预览</span>
                 <div ref="previewHostRef" class="inspector-video-preview-host" />
+                <video
+                  v-if="shouldShowFallbackPreview"
+                  class="inspector-video-preview"
+                  :src="projectionPreviewUrl"
+                  controls
+                  muted
+                  autoplay
+                  playsinline
+                ></video>
                 <div v-if="currentProjectionRuntime" class="inspector-note">
                   {{ currentProjectionRuntime.status || 'idle' }}
                   <span v-if="projectionRuntimeSummary.length"> | {{ projectionRuntimeSummary.join(' | ') }}</span>
                 </div>
               </div>
             </div>
+            <div class="projection-action-groups">
+              <div v-if="isFourPointProjectionMode" class="projection-action-group">
+                <div class="projection-action-title">四点区域</div>
+                <div class="projection-action-grid">
+                  <button class="button-secondary" type="button" @click="emit('action', 'start-quad-video-projection-editing')">开始选四点</button>
+                  <button class="button-secondary" type="button" @click="emit('action', 'clear-quad-video-projection-points')">清空四点</button>
+                </div>
+                <button class="button-primary projection-action-primary" type="button" :disabled="quadPointCount !== 4" @click="emit('action', 'apply-quad-video-projection')">应用四点投影</button>
+              </div>
 
-            <div class="inspector-grid">
-              <label class="inspector-field">
-                <span>投影模式</span>
-                <input :value="projectionModeLabel" type="text" readonly />
-              </label>
-            </div>
+              <div class="projection-action-group">
+                <div class="projection-action-title">摄像头流</div>
+                <div class="projection-action-grid">
+                  <button class="button-secondary" type="button" @click="emit('action', 'start-camera-stream', { cameraId: videoProjectionForm.cameraId })">启动摄像头流</button>
+                  <button class="button-primary" type="button" @click="emit('action', 'bind-camera-stream', { cameraId: videoProjectionForm.cameraId })">绑定摄像头流</button>
+                </div>
+              </div>
 
-            <div v-if="isFourPointProjectionMode" class="inspector-actions">
-              <button class="button-secondary" type="button" @click="emit('action', 'start-quad-video-projection-editing')">开始选四点</button>
-              <button class="button-secondary" type="button" @click="emit('action', 'clear-quad-video-projection-points')">清空四点</button>
-              <button class="button-primary" type="button" :disabled="quadPointCount !== 4" @click="emit('action', 'apply-quad-video-projection')">应用四点投影</button>
-            </div>
-
-            <div class="inspector-note">
-              请按顺序选择四点：1. 左上 2. 右上 3. 右下 4. 左下
-            </div>
-
-            <div class="inspector-actions">
-              <button class="button-secondary" type="button" @click="emit('action', 'start-camera-stream', { cameraId: videoProjectionForm.cameraId })">启动摄像头流</button>
-              <button class="button-primary" type="button" @click="emit('action', 'bind-camera-stream', { cameraId: videoProjectionForm.cameraId })">绑定摄像头流</button>
-              <button class="button-primary" type="button" @click="emit('action', 'toggle-projection-enabled')">{{ projectionToggleLabel }}</button>
+              <div class="projection-action-group">
+                <div class="projection-action-title">投影</div>
+                <button class="button-primary projection-action-primary" type="button" @click="emit('action', 'toggle-projection-enabled')">{{ projectionToggleLabel }}</button>
+              </div>
             </div>
 
             <div v-if="currentCameraStreamStatus?.lastError" class="inspector-note">
@@ -701,25 +688,15 @@ onBeforeUnmount(() => {
             </div>
           </InspectorSection>
 
-          <InspectorSection v-if="isBuildingEnvelope" title="建筑多边体参数" :default-open="true">
-            <div class="inspector-meta-grid">
-              <div class="inspector-meta"><span>顶点数量</span><strong>{{ buildingEnvelopePointCount }}</strong></div>
-              <div class="inspector-meta"><span>高度</span><strong>{{ buildingEnvelopeForm.height }}</strong></div>
-              <div class="inspector-meta"><span>边框</span><strong>{{ buildingEnvelopeForm.outlineVisible ? '显示' : '隐藏' }}</strong></div>
-            </div>
-
+          <InspectorSection v-if="isBuildingEnvelope" title="标签参数" :default-open="true">
             <div class="inspector-grid">
               <label class="inspector-field"><span>高度</span><input v-model.number="buildingEnvelopeForm.height" type="number" min="0" step="0.1" @change="emitBuildingEnvelopeHeight" /></label>
               <label class="inspector-field"><span>颜色</span><input v-model="buildingEnvelopeForm.color" type="color" @change="emitBuildingEnvelopeColor" /></label>
               <label class="inspector-field"><span>透明度</span><input v-model.number="buildingEnvelopeForm.opacity" type="number" min="0" max="1" step="0.05" @change="emitBuildingEnvelopeOpacity" /></label>
-              <label class="inspector-field"><span>显示模式</span><select v-model="buildingEnvelopeForm.displayMode" @change="emitBuildingEnvelopeDisplayMode"><option value="overlay">overlay</option><option value="depth">depth</option></select></label>
               <label class="inspector-field"><span>显示边框</span><input v-model="buildingEnvelopeForm.outlineVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-outline-visible', buildingEnvelopeForm.outlineVisible)" /></label>
               <label class="inspector-field"><span>显示底面</span><input v-model="buildingEnvelopeForm.fillVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-fill-visible', buildingEnvelopeForm.fillVisible)" /></label>
-              <label class="inspector-field"><span>显示顶面</span><input v-model="buildingEnvelopeForm.topVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-top-visible', buildingEnvelopeForm.topVisible)" /></label>
-              <label class="inspector-field"><span>显示侧面</span><input v-model="buildingEnvelopeForm.sideVisible" type="checkbox" @change="emitBuildingEnvelopeToggle('set-building-envelope-side-visible', buildingEnvelopeForm.sideVisible)" /></label>
             </div>
 
-            <div class="inspector-note">高度为 0 时显示 footprint，创建后可在这里设置高度。</div>
           </InspectorSection>
 
           <InspectorSection v-if="isRobotDog" title="巡航路线" :default-open="true">
@@ -788,15 +765,6 @@ onBeforeUnmount(() => {
             </div>
           </InspectorSection>
 
-          <InspectorSection title="编辑入口" :default-open="false">
-            <div class="inspector-note">这些入口保留现有能力，但不再长期占据主视图空间。</div>
-            <div class="inspector-actions">
-              <button class="button-secondary" type="button" @click="emit('action', 'start-building-envelope-drawing')">创建建筑多边体</button>
-              <button class="button-secondary" type="button" @click="emit('action', 'finish-building-envelope-drawing')">闭合并创建</button>
-              <button class="button-secondary" type="button" @click="emit('action', 'undo-building-envelope-point')">撤销上一点</button>
-              <button class="button-secondary" type="button" @click="emit('action', 'cancel-building-envelope-drawing')">取消</button>
-            </div>
-          </InspectorSection>
         </div>
       </template>
     </div>

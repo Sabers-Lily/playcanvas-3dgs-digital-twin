@@ -1,0 +1,250 @@
+{
+  "version": 1,
+  "projectId": "project_mrbgtkl1_2l7ra5",
+  "name": "未命名工程",
+  "createdAt": "2026-07-08T02:35:14.677Z",
+  "updatedAt": "2026-07-08T02:35:14.687Z",
+  "app": {
+    "editorVersion": "0.1.0"
+  },
+  "view": {
+    "target": [
+      -462.2710418701171,
+      124.95938110351562,
+      -68.15262603759771
+    ],
+    "distance": 67.7298487943768,
+    "yaw": 13.199999999999946,
+    "pitch": -26.800000000000026
+  },
+  "assets": [
+    {
+      "id": "base-map",
+      "type": "sog",
+      "name": "base.sog",
+      "fileName": "base.sog",
+      "url": "/assets/base.sog",
+      "sizeBytes": 0,
+      "status": "available",
+      "sourceAssetId": null,
+      "runtimeType": null
+    },
+    {
+      "id": "asset_raw_mr287isv_xmpis1",
+      "type": "sog",
+      "name": "é«é2.sog",
+      "fileName": "é«é2.sog",
+      "url": "/api/assets/asset_raw_mr287isv_xmpis1/file",
+      "sizeBytes": 384962424,
+      "status": "ready",
+      "sourceAssetId": null,
+      "runtimeType": "gsplat"
+    },
+    {
+      "id": "asset_raw_mqyu0h57_idl1lj",
+      "type": "glb",
+      "name": "åå¹¿åº.glb",
+      "fileName": "åå¹¿åº.glb",
+      "url": "/api/assets/asset_raw_mqyu0h57_idl1lj/file",
+      "sizeBytes": 27283760,
+      "status": "ready",
+      "sourceAssetId": null,
+      "runtimeType": "model"
+    }
+  ],
+  "scene": {
+    "objects": [
+      {
+        "id": "base-map",
+        "type": "gsplat",
+        "displayName": "é«é2.sog",
+        "visible": true,
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "metadata": {
+          "url": "/api/assets/asset_raw_mr287isv_xmpis1/file",
+          "sourceName": "é«é2.sog",
+          "source": "public",
+          "assetId": "asset_raw_mr287isv_xmpis1",
+          "sourceAssetId": null,
+          "assetType": "sog",
+          "runtimeType": "sog",
+          "size": 384962424
+        }
+      },
+      {
+        "id": "pick-marker",
+        "type": "marker",
+        "displayName": "Pick Marker",
+        "visible": true,
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "metadata": {
+          "position": "-492.86, 143.69, -67.86"
+        }
+      },
+      {
+        "id": "camera_device_cameraDevice_mran4h2q_t5eqv",
+        "type": "cameraDevice",
+        "displayName": "摄像头",
+        "visible": true,
+        "transform": {
+          "position": [
+            -469.5240250531358,
+            103.62740325927734,
+            -70.19260403003625
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "metadata": {
+          "source": "editor-created",
+          "businessType": "camera",
+          "videoProjection": {
+            "id": "camera_device_cameraDevice_mran4h2q_t5eqv",
+            "enabled": false,
+            "sourceType": "cameraStream",
+            "cameraId": "camera1",
+            "streamUrl": "http://localhost:3000/streams/camera1/index.m3u8",
+            "mode": "quadOverlay",
+            "videoUrl": "http://localhost:3000/streams/camera1/index.m3u8",
+            "projectorFov": 45,
+            "projectorAspect": 1.777,
+            "projectorNear": 0.1,
+            "projectorFar": 1000,
+            "opacity": 1,
+            "softEdge": 0,
+            "flipY": false,
+            "replaceMode": true,
+            "quadEditing": false,
+            "quadPoints": [
+              {
+                "id": "quad-point-001",
+                "index": 0,
+                "label": "左上",
+                "position": [
+                  -470.91419950658576,
+                  120.99187727395301,
+                  -72.07900800339242
+                ]
+              },
+              {
+                "id": "quad-point-002",
+                "index": 1,
+                "label": "右上",
+                "position": [
+                  -444.72248571791704,
+                  119.87363146503202,
+                  -71.41691539779693
+                ]
+              },
+              {
+                "id": "quad-point-003",
+                "index": 2,
+                "label": "右下",
+                "position": [
+                  -441.90587728526134,
+                  91.91128380214647,
+                  -72.2224407481176
+                ]
+              },
+              {
+                "id": "quad-point-004",
+                "index": 3,
+                "label": "左下",
+                "position": [
+                  -481.82494262236537,
+                  92.22617200790548,
+                  -71.72560384402091
+                ]
+              }
+            ],
+            "quadPlaneTolerance": 0.25
+          }
+        }
+      }
+    ],
+    "selectedObjectId": "camera_device_cameraDevice_mran4h2q_t5eqv"
+  },
+  "cameras": [
+    {
+      "id": "camera_device_cameraDevice_mran4h2q_t5eqv",
+      "name": "摄像头",
+      "sourceType": "backend-camera-stream",
+      "cameraId": "camera1",
+      "hlsUrl": "http://localhost:3000/streams/camera1/index.m3u8",
+      "enabled": false
+    }
+  ],
+  "projection": {
+    "fourPointProjections": [
+      {
+        "id": "camera_device_cameraDevice_mran4h2q_t5eqv",
+        "cameraObjectId": "camera_device_cameraDevice_mran4h2q_t5eqv",
+        "cameraId": "camera1",
+        "enabled": false,
+        "opacity": 1,
+        "anchors": [
+          [
+            -470.91419950658576,
+            120.99187727395301,
+            -72.07900800339242
+          ],
+          [
+            -444.72248571791704,
+            119.87363146503202,
+            -71.41691539779693
+          ],
+          [
+            -441.90587728526134,
+            91.91128380214647,
+            -72.2224407481176
+          ],
+          [
+            -481.82494262236537,
+            92.22617200790548,
+            -71.72560384402091
+          ]
+        ]
+      }
+    ]
+  }
+}
