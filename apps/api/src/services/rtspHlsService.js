@@ -1,14 +1,15 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { CAMERA_SOURCES, CAMERA_STREAM_STATUSES } from '../../../../packages/shared/src/cameras.js';
+import { getHlsCacheRoot } from '../config/storagePaths.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const API_ROOT = resolve(__dirname, '..', '..');
-const HLS_CACHE_ROOT = resolve(API_ROOT, '.cache', 'hls');
+const HLS_CACHE_ROOT = getHlsCacheRoot();
 const FFMPEG_BIN = process.env.FFMPEG_PATH || process.env.FFMPEG_BIN || 'ffmpeg';
 const FFMPEG_HLS_MODE = process.env.FFMPEG_HLS_MODE === 'copy' ? 'copy' : 'transcode';
+const HLS_STALE_AFTER_MS = 8000;
 
 function createServiceError(code, message) {
   const error = new Error(message);
@@ -78,6 +79,27 @@ function buildFfmpegArgs(cameraSource, outputFile) {
 
 function formatFfmpegNotFoundMessage() {
   return 'FFmpeg executable not found. Install ffmpeg or configure FFMPEG_PATH.';
+}
+
+function getFileModifiedAtMs(filePath) {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    return statSync(filePath).mtimeMs;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function getFileAgeMs(filePath) {
+  const modifiedAt = getFileModifiedAtMs(filePath);
+  return modifiedAt === null ? null : Math.max(0, Date.now() - modifiedAt);
+}
+
+function isProcessAlive(childProcess) {
+  return Boolean(childProcess && childProcess.exitCode === null && !childProcess.killed);
 }
 
 export class RtspHlsService {
@@ -177,7 +199,15 @@ export class RtspHlsService {
 
     const current = this.streams.get(cameraId);
     if (current?.status === CAMERA_STREAM_STATUSES.RUNNING || current?.status === CAMERA_STREAM_STATUSES.STARTING) {
-      return Promise.resolve(this.getStatus(cameraId));
+      if (isProcessAlive(current.process)) {
+        return Promise.resolve(this.getStatus(cameraId));
+      }
+
+      console.warn('[CameraStream] stale stream entry found, restarting:', {
+        cameraId,
+        status: current.status
+      });
+      this.streams.delete(cameraId);
     }
 
     try {
@@ -262,6 +292,8 @@ export class RtspHlsService {
 
         if (playlistExists) {
           latest.status = CAMERA_STREAM_STATUSES.RUNNING;
+          latest.lastError = null;
+          latest.lastErrorCode = null;
           console.log('[CameraStream] stream started:', { cameraId, playUrl: latest.playUrl });
           resolvePromise(this.getStatus(cameraId));
           return;
@@ -323,6 +355,7 @@ export class RtspHlsService {
     const outputDir = this.getCameraOutputDir(cameraId);
     const playlistPath = this.getPlaylistPath(cameraId);
     const playlistExists = existsSync(playlistPath);
+    const playlistAgeMs = getFileAgeMs(playlistPath);
     const segmentCount = existsSync(outputDir)
       ? readdirSync(outputDir).filter((fileName) => fileName.toLowerCase().endsWith('.ts')).length
       : 0;
@@ -330,19 +363,31 @@ export class RtspHlsService {
     if (!entry) {
       return {
         cameraId,
-        status: playlistExists ? CAMERA_STREAM_STATUSES.RUNNING : CAMERA_STREAM_STATUSES.STOPPED,
+        status: CAMERA_STREAM_STATUSES.STOPPED,
         lastError: null,
         lastErrorCode: null,
         ffmpegPath: this.getFfmpegPath(),
         outputDir,
         indexExists: playlistExists,
+        playlistAgeMs,
         segmentCount,
         playUrl: this.getPlayUrl(cameraId)
       };
     }
 
-    if (entry.status === CAMERA_STREAM_STATUSES.STARTING && playlistExists) {
+    if (entry.status === CAMERA_STREAM_STATUSES.STARTING && playlistExists && isProcessAlive(entry.process)) {
       entry.status = CAMERA_STREAM_STATUSES.RUNNING;
+    }
+
+    if (
+      entry.status === CAMERA_STREAM_STATUSES.RUNNING &&
+      (!isProcessAlive(entry.process) || (playlistAgeMs !== null && playlistAgeMs > HLS_STALE_AFTER_MS))
+    ) {
+      entry.status = CAMERA_STREAM_STATUSES.ERROR;
+      entry.lastError = !isProcessAlive(entry.process)
+        ? 'ffmpeg process is not running'
+        : `HLS output is stale: playlistAgeMs=${Math.round(playlistAgeMs)}`;
+      entry.lastErrorCode = 'CAMERA_STREAM_STALE';
     }
 
     if (!entry.lastError && existsSync(outputDir)) {
@@ -361,6 +406,7 @@ export class RtspHlsService {
       ffmpegPath: this.getFfmpegPath(),
       outputDir,
       indexExists: playlistExists,
+      playlistAgeMs,
       segmentCount,
       playUrl: this.getPlayUrl(cameraId)
     };

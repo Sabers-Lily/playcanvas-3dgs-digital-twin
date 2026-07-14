@@ -5,18 +5,19 @@ function normalizeUrl(url = '') {
 }
 
 export function createCameraSourceKey(sourceConfig = {}) {
+  const normalizedSourceId = normalizeUrl(sourceConfig.id || '');
   const normalizedStreamUrl = normalizeUrl(sourceConfig.streamUrl);
   const normalizedVideoUrl = normalizeUrl(sourceConfig.videoUrl);
 
   if (normalizedStreamUrl) {
-    return `camera-stream-url:${normalizedStreamUrl}`;
+    return `camera-source:${normalizedSourceId}:stream-url:${normalizedStreamUrl}`;
   }
 
   if (sourceConfig.cameraId) {
-    return `camera-stream:${sourceConfig.cameraId}`;
+    return `camera-source:${normalizedSourceId}:camera-id:${sourceConfig.cameraId}`;
   }
 
-  return `video-url:${normalizedVideoUrl}`;
+  return `camera-source:${normalizedSourceId}:video-url:${normalizedVideoUrl}`;
 }
 
 function resolveSourceUrl(sourceConfig = {}) {

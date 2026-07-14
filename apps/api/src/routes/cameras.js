@@ -84,6 +84,7 @@ export async function handleCamerasRoute(request, response, pathname, writeJson,
       ffmpegPath: status.ffmpegPath ?? null,
       outputDir: status.outputDir ?? null,
       indexExists: status.indexExists ?? false,
+      playlistAgeMs: status.playlistAgeMs ?? null,
       segmentCount: status.segmentCount ?? 0,
       playUrl: status.playUrl,
       absolutePlayUrl: buildAbsoluteUrl(request, status.playUrl)

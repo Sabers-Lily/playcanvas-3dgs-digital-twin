@@ -172,6 +172,11 @@ input[type='checkbox'] {
   backdrop-filter: blur(12px);
 }
 
+.is-desktop-shell .editor-topbar {
+  padding-right: 154px;
+  -webkit-app-region: drag;
+}
+
 .editor-toolbar-groups {
   display: flex;
   align-items: center;
@@ -180,6 +185,15 @@ input[type='checkbox'] {
   flex-wrap: nowrap;
   overflow: visible;
   flex: 1;
+}
+
+.is-desktop-shell .editor-toolbar-groups,
+.is-desktop-shell .toolbar-menu-group,
+.is-desktop-shell .toolbar-ghost-button,
+.is-desktop-shell .toolbar-floating-menu,
+.is-desktop-shell .toolbar-menu-item,
+.is-desktop-shell .toolbar-project-name {
+  -webkit-app-region: no-drag;
 }
 
 .toolbar-menu-group {

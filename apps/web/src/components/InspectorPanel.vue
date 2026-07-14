@@ -62,6 +62,7 @@ const props = defineProps({
 const emit = defineEmits(['action']);
 
 const previewHostRef = ref(null);
+const isEditingProjectionStreamUrl = ref(false);
 const renameValue = reactive({ value: '' });
 const transformForm = reactive({
   position: [0, 0, 0],
@@ -129,6 +130,11 @@ const isTransformEditingSelection = computed(() => (
   Boolean(props.transformEdit?.enabled) &&
   props.transformEdit?.objectId === props.selection?.id
 ));
+const transformGuideText = computed(() => (
+  isTransformEditingSelection.value
+    ? '正在编辑当前对象的 Transform，按 Enter 或失焦后提交。'
+    : '可直接修改 Transform 数值，按 Enter 或失焦后提交。'
+));
 const selectedAssetType = computed(() => String(props.selectedAsset?.type || '').toLowerCase());
 const videoProjection = computed(() => props.selection?.metadata?.videoProjection ?? {});
 const cameraOptions = computed(() => Array.isArray(props.cameraStreams?.cameras) ? props.cameraStreams.cameras : []);
@@ -184,20 +190,8 @@ const buildingEnvelopePointCount = computed(() => buildingEnvelope.value?.points
 
 
 const projectionModeLabel = computed(() => {
-  if (videoProjectionForm.mode === 'quad') {
-    return '四点区域投影';
-  }
-
-  if (videoProjectionForm.mode === 'quadOverlay') {
-    return '四点覆盖投影';
-  }
-
-  return '相机视锥投影';
+  return '四点覆盖投影';
 });
-
-const projectionToggleLabel = computed(() => (
-  videoProjectionForm.enabled ? '关闭投影' : '启用投影'
-));
 
 const projectionPreviewUrl = computed(() => (
   videoProjectionForm.sourceType === CAMERA_SOURCE_TYPES.CAMERA_STREAM
@@ -232,6 +226,7 @@ const shouldShowFallbackPreview = computed(() => (
   !currentProjectionRuntime.value?.previewVideoElement &&
   Boolean(projectionPreviewUrl.value)
 ));
+const robotDogTestVideoUrl = '/assets/test.mp4';
 
 const selectedAssetHasReadyRuntime = computed(() => (
   (['sog', 'gsplat', 'glb', 'gltf'].includes(selectedAssetType.value) && Number(props.selectedAsset?.size ?? 0) > 0) ||
@@ -256,16 +251,18 @@ function resetTransformForm(transform) {
   transformForm.scale = transform.scale[0];
 }
 
-function resetVideoProjectionForm() {
+function resetVideoProjectionForm({ preserveStreamUrl = false } = {}) {
   const projection = props.selection?.metadata?.videoProjection ?? null;
   videoProjectionForm.enabled = projection?.enabled ?? false;
   videoProjectionForm.sourceType = CAMERA_SOURCE_TYPES.CAMERA_STREAM;
   videoProjectionForm.cameraId = projection?.cameraId ?? 'camera1';
-  videoProjectionForm.streamUrl = projection?.streamUrl ?? '';
-  videoProjectionForm.mode = projection?.mode === 'cameraFrustum'
-    ? 'cameraFrustum'
-    : (projection?.mode === 'quad' ? 'quad' : 'quadOverlay');
-  videoProjectionForm.videoUrl = projection?.videoUrl ?? '';
+  if (!preserveStreamUrl && !isEditingProjectionStreamUrl.value) {
+    videoProjectionForm.streamUrl = projection?.streamUrl ?? '';
+  }
+  videoProjectionForm.mode = 'quadOverlay';
+  if (!preserveStreamUrl && !isEditingProjectionStreamUrl.value) {
+    videoProjectionForm.videoUrl = projection?.videoUrl ?? '';
+  }
   videoProjectionForm.opacity = projection?.opacity ?? 1;
   videoProjectionForm.softEdge = projection?.softEdge ?? 0;
   videoProjectionForm.flipY = projection?.flipY ?? false;
@@ -295,6 +292,8 @@ watch(
   () => {
     const nextSelection = props.selection;
     renameValue.value = nextSelection?.displayName ?? nextSelection?.name ?? '';
+    isEditingProjectionStreamUrl.value = false;
+    resetVideoProjectionForm({ preserveStreamUrl: false });
   },
   { immediate: true }
 );
@@ -328,9 +327,9 @@ watch(
 );
 
 watch(
-  () => props.selection?.metadata?.videoProjection,
-  () => resetVideoProjectionForm(),
-  { immediate: true, deep: true }
+  () => JSON.stringify(props.selection?.metadata?.videoProjection ?? null),
+  () => resetVideoProjectionForm({ preserveStreamUrl: true }),
+  { immediate: true }
 );
 
 watch(
@@ -390,7 +389,7 @@ function emitVideoProjectionPatch(patch = {}) {
     sourceType: videoProjectionForm.sourceType,
     cameraId: videoProjectionForm.cameraId,
     streamUrl: videoProjectionForm.streamUrl || null,
-    mode: videoProjectionForm.mode,
+    mode: 'quadOverlay',
     videoUrl: videoProjectionForm.videoUrl,
     opacity: videoProjectionForm.opacity,
     softEdge: videoProjectionForm.softEdge,
@@ -459,12 +458,27 @@ function emitBuildingEnvelopeDisplayMode() {
 }
 
 function handleCameraStreamSelectionChange() {
-  videoProjectionForm.streamUrl = currentCameraStreamStatus.value?.absolutePlayUrl || videoProjection.value.streamUrl || '';
+  isEditingProjectionStreamUrl.value = false;
   emitVideoProjectionPatch({
     enabled: videoProjection.value.enabled ?? videoProjectionForm.enabled
   });
   emit('action', 'bind-camera-stream', {
     cameraId: videoProjectionForm.cameraId
+  });
+}
+
+function handleProjectionStreamUrlFocus() {
+  isEditingProjectionStreamUrl.value = true;
+}
+
+function handleProjectionStreamUrlChange() {
+  const normalizedUrl = String(videoProjectionForm.streamUrl || '').trim();
+  videoProjectionForm.streamUrl = normalizedUrl;
+  videoProjectionForm.videoUrl = normalizedUrl;
+  isEditingProjectionStreamUrl.value = false;
+  emitVideoProjectionPatch({
+    streamUrl: normalizedUrl || null,
+    videoUrl: normalizedUrl
   });
 }
 
@@ -525,7 +539,7 @@ onBeforeUnmount(() => {
             <div class="inspector-meta"><span>名称</span><strong>{{ selectedAsset.sourceName }}</strong></div>
             <div class="inspector-meta"><span>格式</span><strong>{{ selectedAsset.type }}</strong></div>
             <div class="inspector-meta"><span>角色</span><strong>{{ selectedAsset.role || '-' }}</strong></div>
-            <div class="inspector-meta"><span>状态</span><ObjectStatusChip :value="selectedAsset.status || '-'" /></div>
+            <div class="inspector-meta"><span>状态</span><ObjectStatusChip :value="selectedAsset.displayStatus || selectedAsset.status || '-'" /></div>
             <div class="inspector-meta"><span>大小</span><strong>{{ typeof selectedAsset.size === 'number' ? `${selectedAsset.size} bytes` : '-' }}</strong></div>
             <div class="inspector-meta"><span>链接</span><strong :title="selectedAsset.url">{{ selectedAsset.url }}</strong></div>
           </div>
@@ -633,13 +647,19 @@ onBeforeUnmount(() => {
             <div class="inspector-grid">
               <label class="inspector-field">
                 <span>HLS 地址</span>
-                <input :value="projectionPreviewUrl" type="text" readonly />
+                <input
+                  v-model="videoProjectionForm.streamUrl"
+                  type="text"
+                  placeholder="请输入 HLS 地址"
+                  @focus="handleProjectionStreamUrlFocus"
+                  @change="handleProjectionStreamUrlChange"
+                />
               </label>
             </div>
 
             <div class="inspector-grid">
               <div class="inspector-field">
-                <span>视频预览</span>
+                <span>视频</span>
                 <div ref="previewHostRef" class="inspector-video-preview-host" />
                 <video
                   v-if="shouldShowFallbackPreview"
@@ -663,21 +683,20 @@ onBeforeUnmount(() => {
                   <button class="button-secondary" type="button" @click="emit('action', 'start-quad-video-projection-editing')">开始选四点</button>
                   <button class="button-secondary" type="button" @click="emit('action', 'clear-quad-video-projection-points')">清空四点</button>
                 </div>
-                <button class="button-primary projection-action-primary" type="button" :disabled="quadPointCount !== 4" @click="emit('action', 'apply-quad-video-projection')">应用四点投影</button>
+                <div class="projection-action-grid">
+                  <button class="button-primary" type="button" :disabled="quadPointCount !== 4" @click="emit('action', 'apply-quad-video-projection')">打开投影</button>
+                  <button class="button-secondary" type="button" :disabled="!videoProjectionForm.enabled" @click="emit('action', 'disable-video-projection')">关闭投影</button>
+                </div>
               </div>
 
               <div class="projection-action-group">
                 <div class="projection-action-title">摄像头流</div>
                 <div class="projection-action-grid">
-                  <button class="button-secondary" type="button" @click="emit('action', 'start-camera-stream', { cameraId: videoProjectionForm.cameraId })">启动摄像头流</button>
-                  <button class="button-primary" type="button" @click="emit('action', 'bind-camera-stream', { cameraId: videoProjectionForm.cameraId })">绑定摄像头流</button>
+                  <button class="button-secondary" type="button" @click="emit('action', 'start-camera-stream', { cameraId: videoProjectionForm.cameraId })">启动摄像</button>
+                  <button class="button-primary" type="button" @click="emit('action', 'bind-camera-stream', { cameraId: videoProjectionForm.cameraId })">绑定摄像</button>
                 </div>
               </div>
 
-              <div class="projection-action-group">
-                <div class="projection-action-title">投影</div>
-                <button class="button-primary projection-action-primary" type="button" @click="emit('action', 'toggle-projection-enabled')">{{ projectionToggleLabel }}</button>
-              </div>
             </div>
 
             <div v-if="currentCameraStreamStatus?.lastError" class="inspector-note">
@@ -716,6 +735,23 @@ onBeforeUnmount(() => {
               <button class="button-secondary" type="button" :disabled="!robotDogPatrol.routeEditing" @click="emit('action', 'robot-dog-stop-edit', { robotDogId: activeSelection.id })">停止编辑路线</button>
               <button class="button-secondary" type="button" @click="emit('action', 'robot-dog-clear-route', { robotDogId: activeSelection.id })">清空路线</button>
               <button class="button-primary" type="button" :disabled="!patrolCanStart" @click="emit('action', 'robot-dog-start-patrol', { robotDogId: activeSelection.id })">开始巡航</button>
+            </div>
+          </InspectorSection>
+
+          <InspectorSection v-if="isRobotDog" title="实时路况" :default-open="true">
+            <div class="inspector-grid">
+              <div class="inspector-field">
+                <span>视频预览</span>
+                <video
+                  class="inspector-video-preview"
+                  :src="robotDogTestVideoUrl"
+                  controls
+                  muted
+                  loop
+                  preload="metadata"
+                  playsinline
+                ></video>
+              </div>
             </div>
           </InspectorSection>
 

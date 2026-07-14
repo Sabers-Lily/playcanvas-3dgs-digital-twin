@@ -38,6 +38,9 @@ export class ProjectionConfigCompatibilityAdapter {
       return null;
     }
 
+    // 编辑器当前仍然把投影配置持久化在 sceneObject.metadata.videoProjection 上。
+    // hydrate 会把这份旧结构镜像到新的 source/projection registry 中，
+    // 这样渲染器和调度器就能工作，同时不改变场景对象这一层的真实数据来源。
     const legacyProjection = this.createDefaultVideoProjectionMetadata(
       sceneObject.id,
       sceneObject.metadata?.videoProjection
@@ -88,6 +91,9 @@ export class ProjectionConfigCompatibilityAdapter {
       return null;
     }
 
+    // 这里总是先从已持久化的场景对象重建，再叠加 patch。
+    // 这样 SceneObjectManager 仍然是长期稳定的数据真相，
+    // projection registry 则只承担运行时派生状态的职责。
     const legacyProjection = this.createDefaultVideoProjectionMetadata(
       objectId,
       sceneObject.metadata?.videoProjection
@@ -142,6 +148,8 @@ export class ProjectionConfigCompatibilityAdapter {
     this.sceneObjectManager.updateObject(objectId, {
       metadata: {
         ...sceneObject.metadata,
+        // 把归一化后的投影配置回写到业务对象上，
+        // 这样 UI、保存导出和运行时看到的都是同一份结构。
         videoProjection: nextLegacyProjection
       }
     });

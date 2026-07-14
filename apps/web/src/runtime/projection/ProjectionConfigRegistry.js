@@ -14,9 +14,7 @@ function normalizeProjectionConfig(config = {}) {
     objectId: config.objectId ?? null,
     sourceId: config.sourceId ?? null,
     enabled: config.enabled ?? false,
-    mode: config.mode === 'cameraFrustum'
-      ? 'cameraFrustum'
-      : (config.mode === 'quad' ? 'quad' : 'quadOverlay'),
+    mode: 'quadOverlay',
     quadPoints: cloneQuadPoints(config.quadPoints),
     opacity: Number.isFinite(Number(config.opacity)) ? Number(config.opacity) : 1,
     softEdge: Number.isFinite(Number(config.softEdge)) ? Number(config.softEdge) : 0,

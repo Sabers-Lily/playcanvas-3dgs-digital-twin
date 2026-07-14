@@ -1,11 +1,8 @@
 import * as pc from 'playcanvas';
-import { GsplatMp4ProjectorAdapter } from '../../engine/GsplatMp4ProjectorAdapter.js';
 
 const DEFAULT_MAX_SLOTS = 4;
 
 const PROJECTION_MODES = {
-  CAMERA_FRUSTUM: 'cameraFrustum',
-  QUAD: 'quad',
   QUAD_OVERLAY: 'quadOverlay'
 };
 
@@ -127,6 +124,8 @@ function computeQuadHomography(screenPoints) {
     return null;
   }
 
+  // quadOverlay 工作在屏幕空间里，所以这里要求解一个单应矩阵，
+  // 把选中的屏幕四边形反算回归一化视频 UV 坐标。
   const uvPoints = [
     [0, 0],
     [1, 0],
@@ -217,6 +216,28 @@ function canBindVideoToTexture(videoElement) {
   const width = Number(videoElement.videoWidth ?? 0);
   const height = Number(videoElement.videoHeight ?? 0);
   return width > 0 && height > 0 && videoElement.readyState >= HTMLMediaElement.HAVE_METADATA;
+}
+
+function getVideoElementDebugState(videoElement) {
+  if (!videoElement) {
+    return {
+      videoReadyState: 0,
+      videoWidth: 0,
+      videoHeight: 0,
+      videoPaused: true,
+      videoCurrentTime: 0,
+      videoSrc: ''
+    };
+  }
+
+  return {
+    videoReadyState: videoElement.readyState ?? 0,
+    videoWidth: videoElement.videoWidth ?? 0,
+    videoHeight: videoElement.videoHeight ?? 0,
+    videoPaused: Boolean(videoElement.paused),
+    videoCurrentTime: videoElement.currentTime ?? 0,
+    videoSrc: videoElement.currentSrc || videoElement.src || ''
+  };
 }
 
 function createFallbackTexture(app) {
@@ -331,11 +352,8 @@ export class GsplatProjectionRenderer {
     this.shaderChunks = null;
     this._originalGsplatModifyPS = undefined;
     this._chunkInstalled = false;
+    this._hasLoggedMissingMaterial = false;
     this.fallbackTexture = createFallbackTexture(app);
-    this.legacyProjector = null;
-    this.legacyProjectionId = null;
-    this.legacySourceId = null;
-    this.legacyRuntime = null;
 
     this.mainProj = new pc.Mat4();
     this.mainView = new pc.Mat4();
@@ -350,19 +368,12 @@ export class GsplatProjectionRenderer {
       ? activeProjectionIds.slice(0, this.maxSlots)
       : [];
 
-    if (nextIds.length <= 1) {
+    if (!nextIds.length) {
       this.clearAllSlots();
       this.restoreShaderChunk();
-      if (nextIds[0]) {
-        await this.syncLegacyProjection(nextIds[0]);
-      } else {
-        this.deactivateLegacyProjection();
-      }
       this.activeProjectionIds = nextIds;
       return this.getRendererState();
     }
-
-    this.deactivateLegacyProjection();
 
     for (let slotIndex = 0; slotIndex < this.maxSlots; slotIndex += 1) {
       const projectionId = nextIds[slotIndex] ?? null;
@@ -386,6 +397,25 @@ export class GsplatProjectionRenderer {
     }
 
     this.activeProjectionIds = nextIds;
+    console.log(`${this.logPrefix} sync active set`, {
+      activeProjectionIds: this.activeProjectionIds,
+      shaderInstalled: this._chunkInstalled,
+      rendererStateSummary: Object.entries(this.getRendererState()).map(([projectionId, state]) => ({
+        projectionId,
+        slotIndex: state.slotIndex,
+        active: state.active,
+        slotEnabled: state.slotEnabled,
+        bound: state.bound,
+        boundToTexture: state.boundToTexture,
+        textureBound: state.textureBound,
+        textureUploading: state.textureUploading,
+        firstUploadLogged: state.firstUploadLogged,
+        videoReady: state.videoReady,
+        readyState: state.videoReadyState,
+        videoWidth: state.videoWidth,
+        videoHeight: state.videoHeight
+      }))
+    });
     return this.getRendererState();
   }
 
@@ -395,111 +425,6 @@ export class GsplatProjectionRenderer {
         this.clearSlot(slotIndex);
       }
     }
-  }
-
-  async syncLegacyProjection(projectionId) {
-    const config = this.projectionRegistry.get(projectionId);
-    if (!config) {
-      this.deactivateLegacyProjection();
-      return false;
-    }
-
-    const source = this.sourceRegistry.get(config.sourceId);
-    if (!source) {
-      this.deactivateLegacyProjection();
-      return false;
-    }
-
-    const consumerId = `projection:${projectionId}`;
-    const reuseLegacyRuntime = this.legacyProjector
-      && this.legacyProjectionId === projectionId
-      && this.legacySourceId === source.id
-      && this.legacyRuntime;
-    const runtimeEntry = reuseLegacyRuntime
-      ? { runtime: this.legacyRuntime, sourceKey: null }
-      : this.runtimePool.acquire(source, consumerId);
-    const runtime = runtimeEntry?.runtime ?? null;
-    const videoElement = runtime?.getVideoElement?.() ?? null;
-    const gsplatEntity = this.getGsplatEntity();
-    const mainCameraEntity = this.getMainCameraEntity();
-    const projectorEntity = this.getProjectorEntity(config.objectId) ?? null;
-
-    if (this.legacyProjectionId && this.legacyProjectionId !== projectionId) {
-      this.deactivateLegacyProjection();
-    }
-
-    if (!this.legacyProjector) {
-      this.legacyProjector = new GsplatMp4ProjectorAdapter({
-        app: this.app,
-        gsplatEntity,
-        mainCameraEntity,
-        projectorEntity,
-        videoElement,
-        mode: config.mode ?? PROJECTION_MODES.QUAD_OVERLAY,
-        opacity: Number(config.opacity ?? 1),
-        softEdge: Number(config.softEdge ?? 0),
-        flipY: Boolean(config.flipY),
-        quadPoints: config.quadPoints,
-        quadPlaneTolerance: Number(config.quadPlaneTolerance ?? 0.25),
-        replaceMode: config.replaceMode ?? true,
-        enabledProjection: Boolean(config.enabled),
-        logDebug: false
-      });
-      this.legacyProjector.initialize();
-    }
-
-    this.legacyProjector.patch({
-      gsplatEntity,
-      mainCameraEntity,
-      projectorEntity,
-      videoElement,
-      mode: config.mode ?? PROJECTION_MODES.QUAD_OVERLAY,
-      opacity: Number(config.opacity ?? 1),
-      softEdge: Number(config.softEdge ?? 0),
-      flipY: Boolean(config.flipY),
-      quadPoints: config.quadPoints,
-      quadPlaneTolerance: Number(config.quadPlaneTolerance ?? 0.25),
-      replaceMode: config.replaceMode ?? true,
-      enabledProjection: Boolean(config.enabled)
-    });
-
-    this.legacyProjectionId = projectionId;
-    this.legacySourceId = source.id;
-    this.legacyRuntime = runtime;
-    this.rendererState.set(projectionId, {
-      slotIndex: 0,
-      active: true,
-      bound: Boolean(videoElement),
-      textureBound: Boolean(this.legacyProjector.videoTexture),
-      textureUploading: Boolean(this.legacyProjector._hasLoggedTextureUpload),
-      shaderInstalled: Boolean(this.legacyProjector._chunkInstalled),
-      error: null
-    });
-    return true;
-  }
-
-  deactivateLegacyProjection() {
-    if (this.legacySourceId && this.legacyProjectionId) {
-      this.runtimePool.release(this.legacySourceId, `projection:${this.legacyProjectionId}`);
-    }
-
-    if (this.legacyProjectionId) {
-      this.rendererState.set(this.legacyProjectionId, {
-        slotIndex: 0,
-        active: false,
-        bound: false,
-        textureBound: false,
-        textureUploading: false,
-        shaderInstalled: false,
-        error: null
-      });
-    }
-
-    this.legacyProjector?.destroy();
-    this.legacyProjector = null;
-    this.legacyProjectionId = null;
-    this.legacySourceId = null;
-    this.legacyRuntime = null;
   }
 
   updateSlot(slotIndex, activeEntry) {
@@ -530,7 +455,7 @@ export class GsplatProjectionRenderer {
     slot.videoElement = videoElement;
     slot.projectorEntity = projectorEntity;
     slot.enabled = Boolean(config.enabled);
-    slot.mode = config.mode ?? PROJECTION_MODES.QUAD_OVERLAY;
+    slot.mode = PROJECTION_MODES.QUAD_OVERLAY;
     slot.opacity = Number(config.opacity ?? 1);
     slot.softEdge = Number(config.softEdge ?? 0);
     slot.flipY = Boolean(config.flipY);
@@ -542,21 +467,47 @@ export class GsplatProjectionRenderer {
     slot.projectorFar = Number(config.projectorFar ?? 1000);
     slot.quadPoints = sanitizeQuadPoints(config.quadPoints);
 
+    // 每个 slot 都维护自己的视频运行时、纹理绑定和 shader uniform。
     this.ensureSlotTexture(slot);
     console.log(`${this.logPrefix} activate`, {
       slotIndex,
       projectionId,
-      sourceId: source.id
-    });
-    this.rendererState.set(projectionId, {
-      slotIndex,
-      active: true,
+      sourceId: source.id,
+      slotEnabled: slot.enabled,
       bound: Boolean(videoElement),
+      boundToTexture: Boolean(slot.boundVideoElement === videoElement),
       textureBound: Boolean(slot.texture),
       textureUploading: slot.textureUploading,
-      shaderInstalled: this._chunkInstalled,
+      videoReady: canBindVideoToTexture(videoElement),
+      readyState: videoElement?.readyState ?? 0,
+      videoWidth: videoElement?.videoWidth ?? 0,
+      videoHeight: videoElement?.videoHeight ?? 0
+    });
+    this.rendererState.set(projectionId, {
+      ...this.createSlotRendererState(slot),
+      slotIndex,
+      active: true,
       error: null
     });
+  }
+
+  createSlotRendererState(slot) {
+    return {
+      slotIndex: slot.slotIndex,
+      projectionId: slot.projectionId,
+      sourceId: slot.sourceId,
+      sourceKey: slot.sourceKey,
+      slotEnabled: Boolean(slot.enabled),
+      active: Boolean(slot.projectionId && slot.enabled),
+      bound: Boolean(slot.videoElement),
+      boundToTexture: Boolean(slot.videoElement && slot.boundVideoElement === slot.videoElement),
+      textureBound: Boolean(slot.texture),
+      textureUploading: Boolean(slot.textureUploading),
+      firstUploadLogged: Boolean(slot.firstUploadLogged),
+      shaderInstalled: this._chunkInstalled,
+      videoReady: canBindVideoToTexture(slot.videoElement),
+      ...getVideoElementDebugState(slot.videoElement)
+    };
   }
 
   ensureSlotTexture(slot) {
@@ -598,12 +549,9 @@ export class GsplatProjectionRenderer {
         slotIndex
       });
       this.rendererState.set(slot.projectionId, {
+        ...this.createSlotRendererState(slot),
         slotIndex,
         active: false,
-        bound: false,
-        textureBound: false,
-        textureUploading: false,
-        shaderInstalled: this._chunkInstalled,
         error: null
       });
     }
@@ -621,10 +569,18 @@ export class GsplatProjectionRenderer {
     const gsplatEntity = this.getGsplatEntity();
     const material = findGsplatMaterial(this.app, gsplatEntity);
     if (!material?.getShaderChunks) {
+      if (!this._hasLoggedMissingMaterial) {
+        this._hasLoggedMissingMaterial = true;
+        console.warn(`${this.logPrefix} shader material not ready`, {
+          hasGsplatEntity: Boolean(gsplatEntity)
+        });
+      }
       return false;
     }
+    this._hasLoggedMissingMaterial = false;
 
     if (this.sceneMaterial && this.sceneMaterial !== material) {
+      console.log(`${this.logPrefix} shader material changed, restoring previous chunk`);
       this.restoreShaderChunk();
     }
 
@@ -906,31 +862,11 @@ export class GsplatProjectionRenderer {
   }
 
   update() {
-    if (this.legacyProjector) {
-      this.legacyProjector.patch({
-        gsplatEntity: this.getGsplatEntity(),
-        mainCameraEntity: this.getMainCameraEntity(),
-        projectorEntity: this.getProjectorEntity(this.legacyProjectionId ? this.projectionRegistry.get(this.legacyProjectionId)?.objectId : null) ?? null
-      });
-      this.legacyProjector.update();
-      if (this.legacyProjectionId) {
-        this.rendererState.set(this.legacyProjectionId, {
-          slotIndex: 0,
-          active: true,
-          bound: Boolean(this.legacyProjector.videoElement),
-          textureBound: Boolean(this.legacyProjector.videoTexture),
-          textureUploading: Boolean(this.legacyProjector._hasLoggedTextureUpload),
-          shaderInstalled: Boolean(this.legacyProjector._chunkInstalled),
-          error: null
-        });
-      }
-      return true;
-    }
-
     if (!this.ensureShaderChunkInstalled()) {
       return false;
     }
 
+    // 当前只保留覆盖投影路径，所有激活投影统一走 slot shader。
     this.updateMatrices();
     this.updateSlots();
     this.updateUniforms();
@@ -945,6 +881,8 @@ export class GsplatProjectionRenderer {
     }
 
     const canvas = this.app.graphicsDevice.canvas;
+    // 片元 shader 会通过主相机的逆 view-projection 矩阵重建世界坐标，
+    // 所以这里必须和当前视口参数保持一致。
     const aspect = Math.max(1e-6, canvas.clientWidth / Math.max(canvas.clientHeight, 1));
     this.mainProj.setPerspective(cameraComponent.fov, aspect, cameraComponent.nearClip, cameraComponent.farClip, false);
     this.mainView.copy(mainCameraEntity.getWorldTransform()).invert();
@@ -986,6 +924,8 @@ export class GsplatProjectionRenderer {
       });
 
       if (cameraComponent && gd && slot.quadPoints.length >= 4) {
+        // quadOverlay 不再依赖世界平面容差，
+        // 而是把四个世界锚点投到屏幕空间，以获得完整的可见区域覆盖。
         const width = Math.max(gd.width || gd.canvas?.width || 0, 1);
         const height = Math.max(gd.height || gd.canvas?.height || 0, 1);
 
@@ -1050,12 +990,9 @@ export class GsplatProjectionRenderer {
 
       if (slot.projectionId) {
         this.rendererState.set(slot.projectionId, {
+          ...this.createSlotRendererState(slot),
           slotIndex: slot.slotIndex,
           active: true,
-          bound: Boolean(slot.videoElement),
-          textureBound: Boolean(slot.texture),
-          textureUploading: slot.textureUploading,
-          shaderInstalled: this._chunkInstalled,
           error: null
         });
       }
@@ -1067,6 +1004,8 @@ export class GsplatProjectionRenderer {
       return;
     }
 
+    // shader 这里会消费每个 slot 的视频纹理和几何数据，
+    // 从而在 frustum、world-quad、screen-quad overlay 三种投影方式之间切换。
     this.sceneMaterial.setParameter('uMainInvViewProj', this.mainInvViewProj.data);
     this.sceneMaterial.setParameter('uScreenSize', this.screenSizeUniform);
 
@@ -1077,7 +1016,7 @@ export class GsplatProjectionRenderer {
       this.sceneMaterial.setParameter(`uProjectionOpacity${slotIndex}`, slot.opacity);
       this.sceneMaterial.setParameter(`uProjectionSoftEdge${slotIndex}`, slot.softEdge);
       this.sceneMaterial.setParameter(`uProjectionFlipY${slotIndex}`, slot.flipY ? 1 : 0);
-      this.sceneMaterial.setParameter(`uProjectionMode${slotIndex}`, slot.mode === PROJECTION_MODES.QUAD_OVERLAY ? 2 : (slot.mode === PROJECTION_MODES.QUAD ? 1 : 0));
+      this.sceneMaterial.setParameter(`uProjectionMode${slotIndex}`, 2);
       this.sceneMaterial.setParameter(`uProjectionReplaceMode${slotIndex}`, slot.replaceMode ? 1 : 0);
       this.sceneMaterial.setParameter(`uProjectionQuadPlaneTolerance${slotIndex}`, Math.max(0.0001, Number(slot.quadPlaneTolerance) || 0.25));
 
@@ -1122,7 +1061,6 @@ export class GsplatProjectionRenderer {
   }
 
   destroy() {
-    this.deactivateLegacyProjection();
     for (let slotIndex = 0; slotIndex < this.maxSlots; slotIndex += 1) {
       this.clearSlot(slotIndex);
     }

@@ -1,0 +1,34 @@
+appId: com.loopengineering.digitaltwin
+productName: LoopEngineering3DGSEditor
+directories:
+  output: dist
+asar: true
+npmRebuild: false
+files:
+  - src/**/*
+  - package.json
+  - from: ../web/dist
+    to: apps/web/dist
+    filter:
+      - '**/*'
+  - from: ../api/src
+    to: apps/api/src
+    filter:
+      - '**/*'
+  - from: ../../packages/shared/src
+    to: packages/shared/src
+    filter:
+      - '**/*'
+  - from: ../../scripts
+    to: scripts
+    filter:
+      - convert-ply-to-sog.mjs
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - '**/*'
+win:
+  target:
+    - nsis
+artifactName: ${productName}-${version}-${arch}.${ext}

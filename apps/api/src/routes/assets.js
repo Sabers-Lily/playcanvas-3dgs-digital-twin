@@ -52,6 +52,46 @@ function assetDeleteBlocked(message = 'Asset delete is blocked') {
   return createApiError('ASSET_DELETE_BLOCKED', message);
 }
 
+function tryDecodeUtf8Filename(value) {
+  if (typeof value !== 'string' || !value) {
+    return value;
+  }
+
+  try {
+    const decoded = Buffer.from(value, 'latin1').toString('utf8');
+    // Keep the original filename when decoding produces replacement characters.
+    return decoded.includes('\uFFFD') ? value : decoded;
+  } catch (_error) {
+    return value;
+  }
+}
+
+function decodeMultipartFilename(headerText) {
+  if (typeof headerText !== 'string' || !headerText) {
+    return null;
+  }
+
+  const filenameStarMatch = headerText.match(/filename\*=([^;]+)/iu);
+  if (filenameStarMatch?.[1]) {
+    const encodedValue = filenameStarMatch[1].trim();
+    const parts = encodedValue.match(/^([^']*)'[^']*'(.*)$/u);
+    const encodedFilename = parts?.[2] ?? encodedValue;
+
+    try {
+      return decodeURIComponent(encodedFilename);
+    } catch (_error) {
+      return encodedFilename;
+    }
+  }
+
+  const dispositionMatch = headerText.match(/filename="([^"]+)"/u);
+  if (!dispositionMatch?.[1]) {
+    return null;
+  }
+
+  return tryDecodeUtf8Filename(dispositionMatch[1]);
+}
+
 function parseMultipartFile(request) {
   return new Promise((resolve, reject) => {
     const contentType = request.headers['content-type'] || '';
@@ -84,8 +124,8 @@ function parseMultipartFile(request) {
         const headerStart = binary.indexOf('\r\n', start) + 2;
         const headerEnd = binary.indexOf('\r\n\r\n', headerStart);
         const headerText = binary.slice(headerStart, headerEnd);
-        const dispositionMatch = headerText.match(/filename="([^"]+)"/u);
-        if (!dispositionMatch) {
+        const filename = decodeMultipartFilename(headerText);
+        if (!filename) {
           const error = new Error('Asset file is required');
           error.code = 'ASSET_FILE_REQUIRED';
           throw error;
@@ -97,7 +137,7 @@ function parseMultipartFile(request) {
         const fileBuffer = buffer.subarray(dataStart, dataEnd);
 
         resolve({
-          filename: dispositionMatch[1],
+          filename,
           buffer: fileBuffer
         });
       } catch (error) {

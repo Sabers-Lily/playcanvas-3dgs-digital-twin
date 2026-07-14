@@ -1,11 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createDefaultScene, createSceneObject, createDefaultTransform } from '../../../../packages/shared/src/scene.js';
+import { getScenesDir } from '../config/storagePaths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.resolve(__dirname, '../../data');
-const scenesDir = path.join(dataDir, 'scenes');
+const scenesDir = getScenesDir();
 
 function getSceneFilePath(sceneId) {
   return path.join(scenesDir, `${sceneId}.json`);

@@ -1,11 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createProjectFile, validateProjectFile } from '../../../../packages/shared/src/project.js';
+import { getProjectsDir } from '../config/storagePaths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const apiRootDir = path.resolve(__dirname, '../..');
-const projectsDir = path.resolve(apiRootDir, '.data/projects');
+const projectsDir = getProjectsDir();
 
 function getProjectDir(projectId) {
   return path.join(projectsDir, projectId);
@@ -30,7 +28,7 @@ export async function saveProjectFile(project) {
     await fs.writeFile(filePath, JSON.stringify(normalizedProject, null, 2), 'utf8');
     return {
       projectId: normalizedProject.projectId,
-      path: path.relative(apiRootDir, filePath).replace(/\\/gu, '/'),
+      path: filePath.replace(/\\/gu, '/'),
       project: normalizedProject
     };
   } catch (_error) {

@@ -18,11 +18,19 @@ export class ProjectionScheduler {
       const source = sourceRegistry?.get(config.sourceId) ?? null;
       const runtimeState = source ? runtimePool?.getState(source.id) : null;
       const quadPointCount = config.quadPoints?.length ?? 0;
+      const runtimeReady = Boolean(
+        runtimeState &&
+        Number(runtimeState.readyState ?? 0) >= 2 &&
+        Number(runtimeState.videoWidth ?? 0) > 0 &&
+        Number(runtimeState.videoHeight ?? 0) > 0 &&
+        runtimeState.status !== 'error'
+      );
       const eligible = Boolean(
         config.enabled &&
         source &&
         quadPointCount === 4 &&
-        (source.streamUrl || source.videoUrl)
+        (source.streamUrl || source.videoUrl) &&
+        runtimeReady
       );
 
       let score = 0;
@@ -39,7 +47,8 @@ export class ProjectionScheduler {
         objectId: config.objectId,
         eligible,
         score,
-        runtimeState
+        runtimeState,
+        runtimeReady
       };
     }).sort((left, right) => right.score - left.score);
 

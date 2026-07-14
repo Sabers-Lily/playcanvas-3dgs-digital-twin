@@ -26,6 +26,8 @@ export class ProjectionEditingController {
       return false;
     }
 
+    // 进入四点编辑时，总是先清空旧锚点并关闭当前投影。
+    // 此后视口点击应优先收集四个世界点，完成后再恢复投影流程。
     this.editingProjectionId = projectionId;
     this.projectionRegistry.update(projectionId, {
       quadEditing: true,
@@ -96,6 +98,8 @@ export class ProjectionEditingController {
     });
 
     if (!quadEditing) {
+      // 收到第 4 个点后会自动结束采点，
+      // 但真正应用投影仍然需要用户显式执行一次操作。
       this.editingProjectionId = null;
     }
 
@@ -131,6 +135,7 @@ export class ProjectionEditingController {
       return false;
     }
 
+    // apply 这里只切换状态；渲染器后续会直接复用已经持久化的四点锚点。
     this.projectionRegistry.update(projectionId, {
       enabled: true,
       quadEditing: false

@@ -10,12 +10,13 @@ import { initializeSceneStore } from './store/memoryStore.js';
 import { ensureProjectDataDir } from './store/fileProjectStore.js';
 import { RtspHlsService } from './services/rtspHlsService.js';
 
+const HOST = process.env.HOST ?? '127.0.0.1';
 const PORT = Number.parseInt(process.env.PORT ?? '3000', 10);
 const WEB_ORIGIN = process.env.WEB_ORIGIN ?? 'http://localhost:5173';
 const rtspHlsService = new RtspHlsService();
 
 function applyCorsHeaders(response) {
-  response.setHeader('Access-Control-Allow-Origin', WEB_ORIGIN);
+  response.setHeader('Access-Control-Allow-Origin', WEB_ORIGIN === '*' ? '*' : WEB_ORIGIN);
   response.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
@@ -168,8 +169,8 @@ async function startServer() {
     }
   });
 
-  server.listen(PORT, () => {
-    console.log(`[API] server running at http://localhost:${PORT}`);
+  server.listen(PORT, HOST, () => {
+    console.log(`[API] server running at http://${HOST}:${PORT}`);
   });
 }
 

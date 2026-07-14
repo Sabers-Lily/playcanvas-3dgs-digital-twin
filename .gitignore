@@ -38,6 +38,7 @@ apps/api/data/assets/*.json
 !apps/api/data/assets/.gitkeep
 apps/api/.cache/**
 !apps/api/.cache/.gitkeep
+apps/api/hls-cache/**
 
 # Large local 3D assets
 apps/web/public/assets/*.sog
@@ -47,3 +48,8 @@ apps/web/public/assets/*.ply
 apps/web/public/assets/*.obj
 apps/web/public/assets/converted/*.sog
 *.mp4
+
+# Local generated 3D assets
+apps/api/assets/storage/asset_raw_mrglbpm6_n3f833/
+apps/api/assets/storage/asset_raw_mrgl84tj_g920fd/
+apps/api/assets/storage/asset_glb_mrgl84x3_1te642/

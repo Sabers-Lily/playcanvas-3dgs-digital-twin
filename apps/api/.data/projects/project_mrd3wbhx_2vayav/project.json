@@ -1,0 +1,557 @@
+{
+  "version": 1,
+  "projectId": "project_mrd3wbhx_2vayav",
+  "name": "工程1",
+  "createdAt": "2026-07-09T06:09:00.213Z",
+  "updatedAt": "2026-07-09T06:09:00.214Z",
+  "app": {
+    "editorVersion": "0.1.0"
+  },
+  "view": {
+    "target": [
+      -321.1440203518725,
+      31.19551420004245,
+      -23.544939199300696
+    ],
+    "distance": 97.81724400146386,
+    "yaw": 23.000000000000007,
+    "pitch": 5.1999999999999975
+  },
+  "assets": [
+    {
+      "id": "base-map",
+      "type": "sog",
+      "name": "base.sog",
+      "fileName": "base.sog",
+      "url": "/assets/base.sog",
+      "sizeBytes": 0,
+      "status": "available",
+      "sourceAssetId": null,
+      "runtimeType": null
+    },
+    {
+      "id": "asset_raw_mrcx262c_3qtqnx",
+      "type": "glb",
+      "name": "南广场.glb",
+      "fileName": "南广场.glb",
+      "url": "/api/assets/asset_raw_mrcx262c_3qtqnx/file",
+      "sizeBytes": 27283760,
+      "status": "ready",
+      "sourceAssetId": null,
+      "runtimeType": "model"
+    },
+    {
+      "id": "asset_raw_mrbtqtrf_m9gznj",
+      "type": "sog",
+      "name": "高铁2.sog",
+      "fileName": "高铁2.sog",
+      "url": "/api/assets/asset_raw_mrbtqtrf_m9gznj/file",
+      "sizeBytes": 384962424,
+      "status": "ready",
+      "sourceAssetId": null,
+      "runtimeType": "gsplat"
+    }
+  ],
+  "scene": {
+    "objects": [
+      {
+        "id": "base-map",
+        "type": "gsplat",
+        "displayName": "高铁2.sog",
+        "visible": true,
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "metadata": {
+          "url": "/api/assets/asset_raw_mrbtqtrf_m9gznj/file",
+          "sourceName": "高铁2.sog",
+          "source": "public",
+          "assetId": "asset_raw_mrbtqtrf_m9gznj",
+          "sourceAssetId": null,
+          "assetType": "sog",
+          "runtimeType": "sog",
+          "size": 384962424
+        }
+      },
+      {
+        "id": "pick-marker",
+        "type": "marker",
+        "displayName": "Pick Marker",
+        "visible": true,
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "metadata": {
+          "position": "-369.80, -2.70, -69.46"
+        }
+      },
+      {
+        "id": "robot_dog_robotDog_mrd2ppd7_0zfvy",
+        "type": "robotDog",
+        "displayName": "无人设备001",
+        "visible": true,
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "metadata": {
+          "source": "editor-created",
+          "businessType": "robotDog",
+          "patrol": {
+            "routeEditing": false,
+            "routePoints": [
+              {
+                "id": "waypoint-1",
+                "index": 0,
+                "position": [
+                  -661.7049260636139,
+                  35.832875486891126,
+                  -64.3231646843022
+                ]
+              },
+              {
+                "id": "waypoint-2",
+                "index": 1,
+                "position": [
+                  -638.491700504478,
+                  62.14677484843796,
+                  -66.032507635515
+                ]
+              },
+              {
+                "id": "waypoint-3",
+                "index": 2,
+                "position": [
+                  -596.0734036737948,
+                  80.57081178075128,
+                  -68.11781043187041
+                ]
+              },
+              {
+                "id": "waypoint-4",
+                "index": 3,
+                "position": [
+                  -535.1028087624796,
+                  91.77090159256068,
+                  -70.85789550898149
+                ]
+              },
+              {
+                "id": "waypoint-5",
+                "index": 4,
+                "position": [
+                  -486.8484193012237,
+                  97.10045807211434,
+                  -73.11155376187962
+                ]
+              },
+              {
+                "id": "waypoint-6",
+                "index": 5,
+                "position": [
+                  -469.558035178733,
+                  94.54000818721639,
+                  -73.02176314689045
+                ]
+              },
+              {
+                "id": "waypoint-7",
+                "index": 6,
+                "position": [
+                  -467.6219935153463,
+                  48.55669581215028,
+                  -69.68559965169375
+                ]
+              },
+              {
+                "id": "waypoint-8",
+                "index": 7,
+                "position": [
+                  -489.1810322843647,
+                  -12.180357345867128,
+                  -63.83442744478284
+                ]
+              },
+              {
+                "id": "waypoint-9",
+                "index": 8,
+                "position": [
+                  -499.77063328092095,
+                  -24.12254512519489,
+                  -63.40849941807364
+                ]
+              },
+              {
+                "id": "waypoint-10",
+                "index": 9,
+                "position": [
+                  -526.1088160611686,
+                  -43.239463146115625,
+                  -58.75783761105477
+                ]
+              },
+              {
+                "id": "waypoint-11",
+                "index": 10,
+                "position": [
+                  -559.3017527057414,
+                  -33.53396712485474,
+                  -56.450923210000894
+                ]
+              },
+              {
+                "id": "waypoint-12",
+                "index": 11,
+                "position": [
+                  -559.491833523623,
+                  -12.386444244062286,
+                  -56.83079905429908
+                ]
+              },
+              {
+                "id": "waypoint-13",
+                "index": 12,
+                "position": [
+                  -555.2650563978847,
+                  8.537083813874027,
+                  -57.04357031894637
+                ]
+              },
+              {
+                "id": "waypoint-14",
+                "index": 13,
+                "position": [
+                  -556.0102914959116,
+                  18.922613886686097,
+                  -57.50065604520635
+                ]
+              },
+              {
+                "id": "waypoint-15",
+                "index": 14,
+                "position": [
+                  -580.6520218977121,
+                  21.59628055156018,
+                  -57.06730907858953
+                ]
+              },
+              {
+                "id": "waypoint-16",
+                "index": 15,
+                "position": [
+                  -591.0431057591481,
+                  20.372609340199393,
+                  -56.978875492068276
+                ]
+              },
+              {
+                "id": "waypoint-17",
+                "index": 16,
+                "position": [
+                  -595.9911254000925,
+                  -10.152407957363378,
+                  -57.026957773737436
+                ]
+              },
+              {
+                "id": "waypoint-18",
+                "index": 17,
+                "position": [
+                  -580.9631435184078,
+                  -12.344236267430926,
+                  -56.833313783036445
+                ]
+              },
+              {
+                "id": "waypoint-19",
+                "index": 18,
+                "position": [
+                  -570.9055105034868,
+                  -13.083023918650325,
+                  -56.85901927820187
+                ]
+              }
+            ],
+            "routeClosed": false,
+            "speed": 2,
+            "loop": true,
+            "state": "ready",
+            "currentSegmentIndex": 0,
+            "progress": 0,
+            "segmentDirection": 1,
+            "modelYawOffset": 0
+          }
+        }
+      },
+      {
+        "id": "camera_device_cameraDevice_mrd2rbua_4fady",
+        "type": "cameraDevice",
+        "displayName": "摄像头001",
+        "visible": true,
+        "transform": {
+          "position": [
+            -369.80071037673923,
+            -2.7022489053903236,
+            -69.46431004764523
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "metadata": {
+          "source": "editor-created",
+          "businessType": "camera",
+          "videoProjection": {
+            "id": "camera_device_cameraDevice_mrd2rbua_4fady",
+            "enabled": true,
+            "sourceType": "cameraStream",
+            "cameraId": "camera1",
+            "streamUrl": "http://localhost:3000/streams/camera1/index.m3u8",
+            "mode": "quadOverlay",
+            "videoUrl": "http://localhost:3000/streams/camera1/index.m3u8",
+            "projectorFov": 45,
+            "projectorAspect": 1.777,
+            "projectorNear": 0.1,
+            "projectorFar": 1000,
+            "opacity": 1,
+            "softEdge": 0,
+            "flipY": false,
+            "replaceMode": true,
+            "quadEditing": false,
+            "quadPoints": [
+              {
+                "id": "quad-point-001",
+                "index": 0,
+                "label": "左上",
+                "position": [
+                  -336.75061053927476,
+                  68.8697890064244,
+                  -75.20950004278491
+                ]
+              },
+              {
+                "id": "quad-point-002",
+                "index": 1,
+                "label": "右上",
+                "position": [
+                  -299.6576452539265,
+                  31.27683205337702,
+                  -75.11126584186779
+                ]
+              },
+              {
+                "id": "quad-point-003",
+                "index": 2,
+                "label": "右下",
+                "position": [
+                  -336.31934395756656,
+                  -10.194862006467943,
+                  -76.43821605058193
+                ]
+              },
+              {
+                "id": "quad-point-004",
+                "index": 3,
+                "label": "左下",
+                "position": [
+                  -375.61173286410076,
+                  29.71448069840715,
+                  -76.12818429767215
+                ]
+              }
+            ],
+            "quadPlaneTolerance": 0.25
+          }
+        }
+      },
+      {
+        "id": "building_envelope_buildingEnvelope_mrd2qqym_w8oo0",
+        "type": "buildingEnvelope",
+        "displayName": "工厂",
+        "visible": true,
+        "transform": {
+          "position": [
+            -263.671788915399,
+            58.473882606815074,
+            -77.15966203593197
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "metadata": {
+          "source": "editor-created",
+          "businessType": "buildingEnvelope",
+          "envelope": {
+            "points": [
+              {
+                "id": "p0",
+                "index": 0,
+                "position": [
+                  -301.8568997331461,
+                  60.19658003694856,
+                  -77.5088327355223
+                ]
+              },
+              {
+                "id": "p1",
+                "index": 1,
+                "position": [
+                  -260.8450369515207,
+                  97.00415638504597,
+                  -76.91352350119026
+                ]
+              },
+              {
+                "id": "p2",
+                "index": 2,
+                "position": [
+                  -239.87032019244234,
+                  75.53676808542419,
+                  -77.17813229905663
+                ]
+              },
+              {
+                "id": "p3",
+                "index": 3,
+                "position": [
+                  -227.56036770196542,
+                  57.347055596076245,
+                  -76.81397925525619
+                ]
+              },
+              {
+                "id": "p4",
+                "index": 4,
+                "position": [
+                  -267.41609819749704,
+                  20.826192450471936,
+                  -77.25142660963284
+                ]
+              },
+              {
+                "id": "p5",
+                "index": 5,
+                "position": [
+                  -284.4820107158227,
+                  39.932543086923594,
+                  -77.29207781493356
+                ]
+              }
+            ],
+            "closed": true,
+            "height": 5,
+            "baseOffset": 0,
+            "color": "#00A3FF",
+            "opacity": 0.25,
+            "outlineVisible": true,
+            "fillVisible": true,
+            "topVisible": true,
+            "sideVisible": true,
+            "upAxis": "z",
+            "displayMode": "overlay"
+          }
+        }
+      }
+    ],
+    "selectedObjectId": "robot_dog_robotDog_mrd2ppd7_0zfvy"
+  },
+  "cameras": [
+    {
+      "id": "camera_device_cameraDevice_mrd2rbua_4fady",
+      "name": "摄像头001",
+      "sourceType": "backend-camera-stream",
+      "cameraId": "camera1",
+      "hlsUrl": "http://localhost:3000/streams/camera1/index.m3u8",
+      "enabled": true
+    }
+  ],
+  "projection": {
+    "fourPointProjections": [
+      {
+        "id": "camera_device_cameraDevice_mrd2rbua_4fady",
+        "cameraObjectId": "camera_device_cameraDevice_mrd2rbua_4fady",
+        "cameraId": "camera1",
+        "enabled": true,
+        "opacity": 1,
+        "anchors": [
+          [
+            -336.75061053927476,
+            68.8697890064244,
+            -75.20950004278491
+          ],
+          [
+            -299.6576452539265,
+            31.27683205337702,
+            -75.11126584186779
+          ],
+          [
+            -336.31934395756656,
+            -10.194862006467943,
+            -76.43821605058193
+          ],
+          [
+            -375.61173286410076,
+            29.71448069840715,
+            -76.12818429767215
+          ]
+        ]
+      }
+    ]
+  }
+}

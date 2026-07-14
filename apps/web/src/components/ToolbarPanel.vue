@@ -48,30 +48,29 @@ const menuGroups = [
     key: 'edit',
     label: '编辑',
     sections: [
-      {
-        title: '创建',
-        items: [
-          { command: 'create-object', payload: 'buildingEnvelope', label: '标注', description: '沿用原建筑多边体创建逻辑' },
-          { command: 'create-object', payload: 'cameraDevice', label: '摄像头', description: '创建视频投影对象' },
-          { command: 'toolbar-action', payload: 'create-robot-dog', label: '无人设备', description: '沿用原机器狗创建逻辑' }
-        ]
-      },
-      {
-        title: '投影',
-        items: [
-          { command: 'toolbar-action', payload: 'start-quad-video-projection-editing', label: '开始选四点', description: '按左上、右上、右下、左下顺序选择世界锚点' },
-          { command: 'toolbar-action', payload: 'apply-quad-video-projection', label: '应用四点投影', description: '将共享摄像头视频固定到四点世界区域' },
-          { command: 'toggle-projection-enabled', label: '启用 / 关闭投影', description: '只开关地图投影，不关闭右侧视频预览' }
-        ]
-      },
-      {
-        title: '机器狗',
-        items: [
-          { command: 'toolbar-action', payload: 'create-robot-dog', label: '添加设备', description: '沿用原机器狗创建逻辑' },
-          { command: 'robot-dog-start-edit', label: '编辑巡航路线', description: '进入路线点位编辑模式' },
-          { command: 'robot-dog-start-patrol', label: '开始巡航', description: '按当前路线开始巡航' }
-        ]
-      }
+      // {
+      //   title: '创建',
+      //   items: [
+      //     { command: 'create-object', payload: 'buildingEnvelope', label: '标注', description: '沿用原建筑多边体创建逻辑' },
+      //     { command: 'create-object', payload: 'cameraDevice', label: '摄像头', description: '创建视频投影对象' },
+      //     { command: 'toolbar-action', payload: 'create-robot-dog', label: '无人设备', description: '沿用原机器狗创建逻辑' }
+      //   ]
+      // },
+      // {
+      //   title: '投影',
+      //   items: [
+      //     { command: 'toolbar-action', payload: 'start-quad-video-projection-editing', label: '开始选四点', description: '按左上、右上、右下、左下顺序选择世界锚点' },
+      //     { command: 'toolbar-action', payload: 'apply-quad-video-projection', label: '应用四点投影', description: '将共享摄像头视频固定到四点世界区域' },
+      //   ]
+      // },
+      // {
+      //   title: '无人设备',
+      //   items: [
+      //     { command: 'toolbar-action', payload: 'create-robot-dog', label: '添加设备', description: '沿用原机器狗创建逻辑' },
+      //     { command: 'robot-dog-start-edit', label: '编辑巡航路线', description: '进入路线点位编辑模式' },
+      //     { command: 'robot-dog-start-patrol', label: '开始巡航', description: '按当前路线开始巡航' }
+      //   ]
+      // }
     ]
   },
   {

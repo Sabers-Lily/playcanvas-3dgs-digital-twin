@@ -1,0 +1,57 @@
+{
+  "assets": [
+    {
+      "id": "asset_raw_mrglbpm6_n3f833",
+      "sourceAssetId": null,
+      "sourceName": "base.sog",
+      "storedName": "original.sog",
+      "type": "sog",
+      "runtimeType": "gsplat",
+      "role": "source",
+      "status": "ready",
+      "mimeType": "application/octet-stream",
+      "size": 384962424,
+      "url": "/api/assets/asset_raw_mrglbpm6_n3f833/file",
+      "storagePath": "assets/storage/asset_raw_mrglbpm6_n3f833/original.sog",
+      "createdAt": "2026-07-11T16:40:10.479Z",
+      "derivedAssetIds": [],
+      "error": null
+    },
+    {
+      "id": "asset_glb_mrgl84x3_1te642",
+      "sourceAssetId": "asset_raw_mrgl84tj_g920fd",
+      "sourceName": "南广场.glb",
+      "storedName": "converted.glb",
+      "type": "glb",
+      "runtimeType": "model",
+      "role": "derived",
+      "status": "ready",
+      "mimeType": "model/gltf-binary",
+      "size": 104070044,
+      "url": "/api/assets/asset_glb_mrgl84x3_1te642/file",
+      "storagePath": "assets/storage/asset_glb_mrgl84x3_1te642/converted.glb",
+      "createdAt": "2026-07-11T16:37:23.559Z",
+      "derivedAssetIds": [],
+      "error": null
+    },
+    {
+      "id": "asset_raw_mrgl84tj_g920fd",
+      "sourceAssetId": null,
+      "sourceName": "南广场.obj",
+      "storedName": "original.obj",
+      "type": "obj",
+      "runtimeType": null,
+      "role": "source",
+      "status": "uploaded",
+      "mimeType": "text/plain",
+      "size": 386431905,
+      "url": "/api/assets/asset_raw_mrgl84tj_g920fd/file",
+      "storagePath": "assets/storage/asset_raw_mrgl84tj_g920fd/original.obj",
+      "createdAt": "2026-07-11T16:37:23.556Z",
+      "derivedAssetIds": [
+        "asset_glb_mrgl84x3_1te642"
+      ],
+      "error": null
+    }
+  ]
+}

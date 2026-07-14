@@ -1,16 +1,23 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import obj2gltf from 'obj2gltf';
+import {
+  getApiRootDir,
+  getAppDataRoot,
+  getAssetDataDir,
+  getAssetIndexFilePath,
+  getAssetStorageDir,
+  getRepoRootDir
+} from '../config/storagePaths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRootDir = path.resolve(__dirname, '../../../..');
-const apiRootDir = path.resolve(__dirname, '../..');
-const dataDir = path.resolve(apiRootDir, 'data/assets');
-const storageDir = path.resolve(apiRootDir, 'storage/assets');
-const indexFilePath = path.join(dataDir, 'assets.json');
+const repoRootDir = getRepoRootDir();
+const apiRootDir = getApiRootDir();
+const appDataRoot = getAppDataRoot();
+const dataDir = getAssetDataDir();
+const storageDir = getAssetStorageDir();
+const indexFilePath = getAssetIndexFilePath();
 const convertPlyScriptPath = path.resolve(repoRootDir, 'scripts/convert-ply-to-sog.mjs');
+let obj2gltfLoader = null;
 
 const ALLOWED_EXTENSIONS = new Map([
   ['.sog', { type: 'sog', mimeType: 'application/octet-stream', runtimeType: 'gsplat' }],
@@ -39,7 +46,7 @@ function getStoragePath(assetId, storedName) {
 }
 
 function toStoragePathForIndex(assetId, storedName) {
-  return `storage/assets/${assetId}/${storedName}`;
+  return `assets/storage/${assetId}/${storedName}`;
 }
 
 function getTypeInfoFromType(type) {
@@ -67,6 +74,74 @@ function normalizeAssetRecord(record) {
     derivedAssetIds: Array.isArray(record.derivedAssetIds) ? [...record.derivedAssetIds] : [],
     error: record.error ?? null
   };
+}
+
+function decodeTextBuffer(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length <= 0) {
+    return '';
+  }
+
+  const utf8Text = buffer.toString('utf8');
+  if (!utf8Text.includes('\uFFFD')) {
+    return utf8Text;
+  }
+
+  return buffer.toString('latin1');
+}
+
+function extractObjMaterialPaths(buffer) {
+  const text = decodeTextBuffer(buffer);
+  if (!text) {
+    return [];
+  }
+
+  const paths = new Set();
+  text.split(/\r?\n/u).forEach((line) => {
+    const match = line.match(/^\s*mtllib\s+(.+?)\s*$/iu);
+    if (!match?.[1]) {
+      return;
+    }
+
+    paths.add(match[1].trim());
+  });
+
+  return [...paths];
+}
+
+async function ensureObjMaterialFiles(inputPath) {
+  const assetDir = path.dirname(inputPath);
+  const inputBuffer = await fs.readFile(inputPath);
+  const materialPaths = extractObjMaterialPaths(inputBuffer);
+
+  for (const relativePath of materialPaths) {
+    const normalizedRelativePath = relativePath.replace(/[\\/]+/gu, path.sep);
+    const absolutePath = path.resolve(assetDir, normalizedRelativePath);
+    const relativeToAssetDir = path.relative(assetDir, absolutePath);
+
+    if (
+      !relativeToAssetDir ||
+      relativeToAssetDir.startsWith('..') ||
+      path.isAbsolute(relativeToAssetDir)
+    ) {
+      continue;
+    }
+
+    try {
+      await fs.access(absolutePath);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        throw error;
+      }
+
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+      await fs.writeFile(
+        absolutePath,
+        '# Generated placeholder because the referenced OBJ material file was not uploaded.\n',
+        'utf8'
+      );
+      console.warn('[AssetStore] OBJ material file missing, generated placeholder:', absolutePath);
+    }
+  }
 }
 
 async function ensureAssetDirs() {
@@ -160,6 +235,14 @@ function runSplatTransform(inputPath, outputPath) {
   });
 }
 
+async function loadObj2Gltf() {
+  if (!obj2gltfLoader) {
+    obj2gltfLoader = import('obj2gltf').then((module) => module.default);
+  }
+
+  return obj2gltfLoader;
+}
+
 async function writeDerivedAssetFile(assetId, storedName, buffer) {
   const assetDir = path.join(storageDir, assetId);
   const filePath = getStoragePath(assetId, storedName);
@@ -232,6 +315,12 @@ async function setAssetProcessingResult(assetId, patch) {
   });
 }
 
+async function setSourceAssetProcessingState(sourceAssetId, patch) {
+  return updateAssetIndex(sourceAssetId, (asset) => {
+    Object.assign(asset, patch);
+  });
+}
+
 async function convertPlyToSogAsset(sourceAsset) {
   const derivedSourceName = `${path.basename(sourceAsset.sourceName, path.extname(sourceAsset.sourceName))}.sog`;
   const derivedStoredName = 'converted.sog';
@@ -243,10 +332,14 @@ async function convertPlyToSogAsset(sourceAsset) {
     derivedStoredName
   });
 
-  const inputPath = path.resolve(apiRootDir, sourceAsset.storagePath);
+  const inputPath = path.resolve(appDataRoot, sourceAsset.storagePath);
   const outputPath = getStoragePath(derivedAsset.id, derivedStoredName);
 
   try {
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'processing',
+      error: null
+    });
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await runSplatTransform(inputPath, outputPath);
     const stats = await fs.stat(outputPath);
@@ -256,6 +349,10 @@ async function convertPlyToSogAsset(sourceAsset) {
     await setAssetProcessingResult(derivedAsset.id, {
       status: 'ready',
       size: stats.size,
+      error: null
+    });
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'available',
       error: null
     });
     return {
@@ -268,6 +365,10 @@ async function convertPlyToSogAsset(sourceAsset) {
     await setAssetProcessingResult(derivedAsset.id, {
       status: 'failed',
       size: 0,
+      error: error?.message || 'Failed to convert PLY to SOG'
+    });
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'uploaded',
       error: error?.message || 'Failed to convert PLY to SOG'
     });
     const convertError = new Error('Failed to convert PLY to SOG');
@@ -288,27 +389,25 @@ async function convertObjToGlbAsset(sourceAsset) {
     derivedStoredName
   });
 
-  const inputPath = path.resolve(apiRootDir, sourceAsset.storagePath);
+  const inputPath = path.resolve(appDataRoot, sourceAsset.storagePath);
   const outputPath = getStoragePath(derivedAsset.id, derivedStoredName);
-  const siblingMtlPath = path.join(path.dirname(inputPath), `${path.basename(inputPath, '.obj')}.mtl`);
 
   try {
-    try {
-      await fs.access(siblingMtlPath);
-      const unsupportedError = new Error('OBJ external material files are not supported yet.');
-      unsupportedError.code = 'ASSET_PROCESS_NOT_SUPPORTED';
-      throw unsupportedError;
-    } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        throw error;
-      }
-    }
-
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'processing',
+      error: null
+    });
+    await ensureObjMaterialFiles(inputPath);
+    const obj2gltf = await loadObj2Gltf();
     const glbBuffer = await obj2gltf(inputPath, { binary: true });
     await writeDerivedAssetFile(derivedAsset.id, derivedStoredName, glbBuffer);
     await setAssetProcessingResult(derivedAsset.id, {
       status: 'ready',
       size: glbBuffer.length,
+      error: null
+    });
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'available',
       error: null
     });
     return {
@@ -319,6 +418,10 @@ async function convertObjToGlbAsset(sourceAsset) {
   } catch (error) {
     await setAssetProcessingResult(derivedAsset.id, {
       status: 'failed',
+      error: error?.message || 'Failed to convert OBJ to GLB'
+    });
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'uploaded',
       error: error?.message || 'Failed to convert OBJ to GLB'
     });
 
@@ -371,10 +474,14 @@ async function retryPlyDerivedAsset(sourceAsset, derivedAsset) {
     error: null
   });
 
-  const inputPath = path.resolve(apiRootDir, sourceAsset.storagePath);
+  const inputPath = path.resolve(appDataRoot, sourceAsset.storagePath);
   const outputPath = getStoragePath(derivedAsset.id, 'converted.sog');
 
   try {
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'processing',
+      error: null
+    });
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await runSplatTransform(inputPath, outputPath);
     const stats = await fs.stat(outputPath);
@@ -384,6 +491,10 @@ async function retryPlyDerivedAsset(sourceAsset, derivedAsset) {
     await setAssetProcessingResult(derivedAsset.id, {
       status: 'ready',
       size: stats.size,
+      error: null
+    });
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'available',
       error: null
     });
     return {
@@ -396,6 +507,10 @@ async function retryPlyDerivedAsset(sourceAsset, derivedAsset) {
     await setAssetProcessingResult(derivedAsset.id, {
       status: 'failed',
       size: 0,
+      error: error?.message || 'Failed to convert PLY to SOG'
+    });
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'uploaded',
       error: error?.message || 'Failed to convert PLY to SOG'
     });
     const convertError = new Error('Failed to convert PLY to SOG');
@@ -415,26 +530,24 @@ async function retryObjDerivedAsset(sourceAsset, derivedAsset) {
     error: null
   });
 
-  const inputPath = path.resolve(apiRootDir, sourceAsset.storagePath);
-  const siblingMtlPath = path.join(path.dirname(inputPath), `${path.basename(inputPath, '.obj')}.mtl`);
+  const inputPath = path.resolve(appDataRoot, sourceAsset.storagePath);
 
   try {
-    try {
-      await fs.access(siblingMtlPath);
-      const unsupportedError = new Error('OBJ external material files are not supported yet.');
-      unsupportedError.code = 'ASSET_PROCESS_NOT_SUPPORTED';
-      throw unsupportedError;
-    } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        throw error;
-      }
-    }
-
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'processing',
+      error: null
+    });
+    await ensureObjMaterialFiles(inputPath);
+    const obj2gltf = await loadObj2Gltf();
     const glbBuffer = await obj2gltf(inputPath, { binary: true });
     await writeDerivedAssetFile(derivedAsset.id, 'converted.glb', glbBuffer);
     await setAssetProcessingResult(derivedAsset.id, {
       status: 'ready',
       size: glbBuffer.length,
+      error: null
+    });
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'available',
       error: null
     });
     return {
@@ -445,6 +558,10 @@ async function retryObjDerivedAsset(sourceAsset, derivedAsset) {
   } catch (error) {
     await setAssetProcessingResult(derivedAsset.id, {
       status: 'failed',
+      error: error?.message || 'Failed to convert OBJ to GLB'
+    });
+    await setSourceAssetProcessingState(sourceAsset.id, {
+      status: 'uploaded',
       error: error?.message || 'Failed to convert OBJ to GLB'
     });
 
@@ -578,6 +695,12 @@ export async function processAsset(assetId) {
 
   const readyDerivedAsset = getReadyDerivedAsset(currentSource, index.assets);
   if (readyDerivedAsset) {
+    if (currentSource.status !== 'available') {
+      await setSourceAssetProcessingState(currentSource.id, {
+        status: 'available',
+        error: null
+      });
+    }
     return {
       assetId: currentSource.id,
       status: 'ready',
@@ -630,7 +753,7 @@ export async function getAssetFile(assetId) {
     return null;
   }
 
-  const filePath = path.resolve(path.join(apiRootDir, record.storagePath));
+  const filePath = path.resolve(appDataRoot, record.storagePath);
 
   try {
     const buffer = await fs.readFile(filePath);

@@ -38,11 +38,11 @@ const ADD_OBJECT_ITEMS = [
 
 const GROUP_DEFINITIONS = [
   { key: 'maps', label: '地图' },
-  { key: 'buildings', label: '建筑' },
+  { key: 'buildings', label: '标注' },
   { key: 'cameras', label: '摄像头' },
-  { key: 'robots', label: '机器狗' },
+  { key: 'robots', label: '无人设备' },
   { key: 'helpers', label: '辅助对象' },
-  { key: 'others', label: '其他' }
+  { key: 'others', label: '模型' }
 ];
 
 function typeIcon(type) {

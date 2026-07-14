@@ -1,0 +1,33 @@
+{
+  "name": "desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Electron desktop shell for the 3DGS digital twin editor.",
+  "author": "Loop Engineering",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "verify": "node src/verifySetup.js",
+    "dev": "pnpm run verify && electron .",
+    "pack": "pnpm run verify && electron-builder --config electron-builder.yml --dir",
+    "dist": "pnpm run verify && electron-builder --config electron-builder.yml"
+  },
+  "dependencies": {
+    "@playcanvas/splat-transform": "^2.6.0",
+    "bluebird": "^3.7.2",
+    "cesium": "^1.142.0",
+    "fs-extra": "^11.3.5",
+    "graceful-fs": "^4.2.11",
+    "jpeg-js": "^0.4.4",
+    "jsonfile": "^6.2.0",
+    "mime": "^3.0.0",
+    "obj2gltf": "^3.2.0",
+    "pngjs": "^7.0.0",
+    "universalify": "^2.0.1",
+    "yargs": "^17.7.3"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}

@@ -222,6 +222,7 @@ function buildAssetView(rawAssets) {
   });
 
   return assets.map((asset) => {
+    const normalizedType = String(asset.type || '').toLowerCase();
     const derivedAssets = derivedBySourceId.get(asset.id) ?? [];
     const latestDerivedAsset = [...derivedAssets]
       .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime())[0] ?? null;
@@ -236,11 +237,22 @@ function buildAssetView(rawAssets) {
           ['sog', 'glb', 'gltf'].includes(String(entry.type || '').toLowerCase())
         )) ?? null
     );
+    const displayStatus = (
+      (normalizedType === 'obj' || normalizedType === 'ply') &&
+      latestDerivedAsset
+    )
+      ? (
+        latestDerivedAsset.status === 'ready' && Number(latestDerivedAsset.size ?? 0) > 0
+          ? 'ready'
+          : latestDerivedAsset.status
+      )
+      : asset.status;
 
     return {
       ...asset,
       derivedAssets,
       derivedAssetIds: Array.isArray(asset.derivedAssetIds) ? asset.derivedAssetIds.map((id) => byId.get(id) ? id : id) : [],
+      displayStatus,
       preferredRuntimeAsset,
       latestDerivedAsset,
       sourceAsset: asset.sourceAssetId ? byId.get(asset.sourceAssetId) ?? null : null
@@ -334,7 +346,7 @@ const currentEditBanner = computed(() => {
       description: `按左上、右上、右下、左下顺序点击地图。当前已选 ${quadPointCount} / 4 点。`,
       actions: [
         { action: 'clear-quad-video-projection-points', label: '清空四点' },
-        { action: 'apply-quad-video-projection', label: '应用四点投影', variant: 'primary', disabled: quadPointCount !== 4 },
+        { action: 'apply-quad-video-projection', label: '打开投影', variant: 'primary', disabled: quadPointCount !== 4 },
         { action: 'stop-quad-video-projection-editing', label: '取消', variant: 'danger' }
       ]
     };
@@ -343,7 +355,7 @@ const currentEditBanner = computed(() => {
   if (routeEditingObject || selectedObject?.metadata?.patrol?.routeEditing) {
     return {
       label: '编辑模式',
-      title: '正在编辑机器狗路线',
+      title: '正在编辑无人设备路线',
       description: '点击地图添加路线点，完成后可开始巡航。',
       actions: [
         { action: 'robot-dog-clear-route', label: '清空路线' },
@@ -639,7 +651,32 @@ async function onChooseUploadAsset(event) {
   }
 
   try {
-    const asset = await uploadAsset(file);
+    let lastLoggedProgress = -10;
+    let waitingForServerProcessing = false;
+
+    prependUiLog(`Asset upload started: ${file.name}`);
+    const asset = await uploadAsset(file, {
+      onProgress(progress) {
+        const progressBucket = progress.percent >= 100
+          ? 100
+          : Math.floor(progress.percent / 10) * 10;
+
+        if (progressBucket <= lastLoggedProgress) {
+          return;
+        }
+
+        lastLoggedProgress = progressBucket;
+        prependUiLog(`Asset upload ${progressBucket}%: ${file.name}`);
+      },
+      onServerProcessing() {
+        if (waitingForServerProcessing) {
+          return;
+        }
+
+        waitingForServerProcessing = true;
+        prependUiLog(`Asset upload complete, waiting for server processing: ${file.name}`);
+      }
+    });
     await refreshAssets();
     prependUiLog(`Asset uploaded: ${asset.sourceName}`);
     if (['ply', 'obj'].includes(String(asset.type || '').toLowerCase())) {
@@ -878,14 +915,9 @@ function onToolbarCommand({ command, payload }) {
     case 'clear-marker':
       onInspectorAction('clear-marker');
       return;
-    case 'toggle-projection-enabled':
-      onInspectorAction('toggle-projection-enabled');
-      return;
     case 'projection-mode':
-      onInspectorAction('update-video-projection', { mode: payload });
-      if (payload === 'quad') {
-        onInspectorAction('start-quad-video-projection-editing');
-      }
+      onInspectorAction('update-video-projection', { mode: 'quadOverlay' });
+      onInspectorAction('start-quad-video-projection-editing');
       return;
     case 'robot-dog-start-edit':
       onInspectorAction('robot-dog-start-edit', {

@@ -232,11 +232,11 @@ export class CameraVideoRuntime {
     this.lastError = null;
     this._playAttemptPending = false;
     this.lastSample = this.buildSample();
-    console.log(`${this.logPrefix} playing`, {
-      runtimeId: this.runtimeId,
-      currentTime: this.lastSample.currentTime,
-      readyState: this.lastSample.readyState
-    });
+    // console.log(`${this.logPrefix} playing`, {
+    //   runtimeId: this.runtimeId,
+    //   currentTime: this.lastSample.currentTime,
+    //   readyState: this.lastSample.readyState
+    // });
   }
 
   handlePause() {
