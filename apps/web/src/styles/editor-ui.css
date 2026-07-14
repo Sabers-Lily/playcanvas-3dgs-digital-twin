@@ -280,6 +280,11 @@ input[type='checkbox'] {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.toolbar-menu-item.is-active {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(59, 130, 246, 0.28);
+}
+
 .toolbar-menu-item-title {
   font-size: var(--font-size-sm);
   font-weight: 600;
@@ -332,6 +337,113 @@ input[type='checkbox'] {
   inset: 0;
   z-index: 16;
   pointer-events: none;
+}
+
+.measurement-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  pointer-events: none;
+}
+
+.measurement-overlay__prompt {
+  position: absolute;
+  top: var(--space-4);
+  left: 50%;
+  z-index: 2;
+  transform: translateX(-50%);
+  max-width: min(640px, calc(100% - 32px));
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: var(--radius-md);
+  background: rgba(10, 18, 28, 0.86);
+  color: #ffffff;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  line-height: 1.4;
+  text-align: center;
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(10px);
+}
+
+.measurement-overlay__svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.measurement-overlay__measurement {
+  --measure-main: #38bdf8;
+  --measure-fill: rgba(56, 189, 248, 0.2);
+  --measure-outline: rgba(8, 15, 30, 0.9);
+}
+
+.measurement-overlay__measurement.is-area {
+  --measure-main: #34d399;
+  --measure-fill: rgba(52, 211, 153, 0.18);
+}
+
+.measurement-overlay__measurement.is-draft {
+  opacity: 0.82;
+}
+
+.measurement-overlay__polygon {
+  fill: var(--measure-fill);
+  stroke: none;
+}
+
+.measurement-overlay__line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.measurement-overlay__line--outline {
+  stroke: var(--measure-outline);
+  stroke-width: 7px;
+}
+
+.measurement-overlay__line--main {
+  stroke: var(--measure-main);
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.14));
+}
+
+.measurement-overlay__measurement.is-draft .measurement-overlay__line--main {
+  stroke-dasharray: 7 6;
+}
+
+.measurement-overlay__marker {
+  pointer-events: none;
+}
+
+.measurement-overlay__marker-ring {
+  fill: rgba(8, 15, 30, 0.88);
+  stroke: rgba(255, 255, 255, 0.78);
+  stroke-width: 2px;
+}
+
+.measurement-overlay__marker-core {
+  fill: var(--measure-main);
+  stroke: rgba(8, 15, 30, 0.38);
+  stroke-width: 1px;
+}
+
+.measurement-overlay__label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(10, 18, 28, 0.9);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
 }
 
 .robot-route-overlay__svg {

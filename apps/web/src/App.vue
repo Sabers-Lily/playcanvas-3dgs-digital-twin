@@ -7,6 +7,7 @@ import InspectorPanel from './components/InspectorPanel.vue';
 import BottomPanel from './components/BottomPanel.vue';
 import ContextMenu from './components/ContextMenu.vue';
 import EditModeBanner from './components/editor/EditModeBanner.vue';
+import MeasurementOverlay from './components/editor/MeasurementOverlay.vue';
 import ObjectMarkerOverlay from './components/editor/ObjectMarkerOverlay.vue';
 import RobotRouteOverlay from './components/editor/RobotRouteOverlay.vue';
 import { createMiniEditorRuntime } from './runtime/createMiniEditorRuntime.js';
@@ -73,6 +74,12 @@ const snapshot = reactive({
   },
   objectMarkers: [],
   robotRouteOverlays: [],
+  measurementOverlay: {
+    isActive: false,
+    activeTool: 'select',
+    prompt: '',
+    measurements: []
+  },
   selectedAssetId: null,
   statusMessage: 'Ready',
   statusSummary: {
@@ -183,6 +190,12 @@ function syncSnapshot(next) {
         waypoints: Array.isArray(route.waypoints) ? route.waypoints.map((waypoint) => ({ ...waypoint })) : []
       }))
     : [];
+  snapshot.measurementOverlay = next.measurementOverlay ?? {
+    isActive: false,
+    activeTool: 'select',
+    prompt: '',
+    measurements: []
+  };
   snapshot.statusMessage = next.statusMessage;
   snapshot.statusSummary = next.statusSummary;
   snapshot.transformEdit = next.transformEdit ?? {
@@ -1047,6 +1060,7 @@ onBeforeUnmount(() => {
     <ToolbarPanel
       :status-message="snapshot.statusMessage"
       :project-name="currentProjectName"
+      :active-tool="snapshot.measurementOverlay?.activeTool ?? 'select'"
       @command="onToolbarCommand"
     />
 
@@ -1088,6 +1102,7 @@ onBeforeUnmount(() => {
             @select="onObjectMarkerSelect"
           />
           <RobotRouteOverlay :routes="snapshot.robotRouteOverlays" />
+          <MeasurementOverlay :overlay="snapshot.measurementOverlay" />
           <div
             v-if="!runtime && snapshot.statusMessage !== 'Ready'"
             class="inspector-empty"

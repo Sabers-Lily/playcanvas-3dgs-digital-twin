@@ -37,6 +37,7 @@ import { GsplatProjectionRenderer } from './projection/GsplatProjectionRenderer.
 import { ProjectionDiagnostics } from './projection/ProjectionDiagnostics.js';
 import { ObjectMarkerManager } from './markers/ObjectMarkerManager.js';
 import { RobotRouteOverlayManager } from './robotdog/RobotRouteOverlayManager.js';
+import { MeasurementManager, MEASUREMENT_TOOL } from './measurement/MeasurementManager.js';
 
 const OBJECT_IDS = {
   camera: 'camera',
@@ -602,6 +603,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     sceneObjectManager,
     selectionManager
   });
+  const measurementManager = new MeasurementManager({
+    cameraEntity: camera,
+    canvas,
+    viewportElement,
+    onChange: () => emitState(),
+    onStatus: (message) => updateStatusMessage(message)
+  });
 
   cameraController.setDefaultFocus({
     target: new pc.Vec3(0, 0, 0),
@@ -688,6 +696,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     },
     objectMarkers: [],
     robotRouteOverlays: [],
+    measurementOverlay: null,
     uploadedAssets: [],
     statusMessage: 'Ready',
     statusSummary: {
@@ -1550,6 +1559,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   function buildRuntimeSnapshot() {
     objectMarkerManager.update();
     robotRouteOverlayManager.update();
+    measurementManager.update();
     state.objects = sceneObjectManager.getObjectSnapshots();
     state.selectedId = selectionManager.getSelectedId();
     state.selectedObject = selectionManager.getSelectedSnapshot();
@@ -1559,6 +1569,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     state.cameraStreams = buildCameraStreamsSnapshot();
     state.objectMarkers = objectMarkerManager.getMarkerViewModels();
     state.robotRouteOverlays = robotRouteOverlayManager.getOverlayModels();
+    state.measurementOverlay = measurementManager.getOverlayModel();
     state.statusMessage = statusState.message;
     state.statusSummary = {
       sog: statusState.sog.detail,
@@ -1579,6 +1590,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       cameraStreams: state.cameraStreams,
       objectMarkers: state.objectMarkers,
       robotRouteOverlays: state.robotRouteOverlays,
+      measurementOverlay: state.measurementOverlay,
       statusMessage: state.statusMessage,
       statusSummary: { ...state.statusSummary },
       transformEdit: state.transformEdit,
@@ -4090,6 +4102,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       });
     }
 
+    measurementManager.deactivate({ silent: true });
+
     // 鍦ㄥ鐢ㄨ鍙ｇ偣鍑绘潵閲囬泦鍥涚偣鏈熼棿锛岃淇濇寔 cameraDevice 浠嶇劧澶勪簬閫変腑鐘舵€侊紝
     // 鍚﹀垯鍙充晶灞炴€т細涓㈠け涓婁笅鏂囥€?
     clearBuildingEnvelopeHover();
@@ -4201,6 +4215,32 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     state.steps.rotate = Math.max(0.001, readNumberValue(nextSteps.rotate, state.steps.rotate));
     state.steps.scale = Math.max(0.001, readNumberValue(nextSteps.scale, state.steps.scale));
     emitState();
+  }
+
+  function setMeasurementTool(tool) {
+    if (tool === MEASUREMENT_TOOL.SELECT) {
+      measurementManager.deactivate();
+      return true;
+    }
+
+    if (transformEditState.enabled) {
+      commitTransformEdit({
+        skipStatusMessage: true
+      });
+    }
+
+    cancelPlacementMode();
+    cancelBuildingEnvelopeDrawing();
+    const editingCameraId = getEditingQuadProjectionCameraId();
+    if (editingCameraId) {
+      stopQuadVideoProjectionEditing(editingCameraId);
+    }
+
+    return measurementManager.activate(tool);
+  }
+
+  function clearMeasurements() {
+    return measurementManager.clearAll();
   }
 
   function getAnnotationCustomFields(objectId) {
@@ -4408,7 +4448,18 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       case 'create-robot-dog':
         createRobotDog();
         return;
+      case 'measure-distance':
+        setMeasurementTool(MEASUREMENT_TOOL.DISTANCE);
+        return;
+      case 'measure-area':
+        setMeasurementTool(MEASUREMENT_TOOL.AREA);
+        return;
+      case 'clear-measurements':
+        clearMeasurements();
+        return;
+
       case 'start-quad-video-projection-editing':
+        measurementManager.deactivate({ silent: true });
         startQuadVideoProjectionEditing(selectionManager.getSelectedId());
         return;
       case 'apply-quad-video-projection':
@@ -4885,6 +4936,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     markerManager,
     gsplatPointPicker,
     shouldPrioritizeScenePick: () => Boolean(
+      measurementManager.isActive() ||
       robotDogPatrolController.getEditingRobotDogId() ||
       getEditingQuadProjectionCameraId() ||
       buildingEnvelopeController.isDrawing()
@@ -4912,6 +4964,18 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     onBusinessObjectHoverClear: () => {
       canvas.style.cursor = 'default';
       selectableObjectController.clearHoveredObject();
+    },
+    onWorldPointPick: (hit) => {
+      const worldPoint = hit?.worldPoint ?? hit?.point ?? null;
+      return measurementManager.handleWorldPointPick(worldPoint);
+    },
+    onWorldPointerMove: (x, y) => {
+      if (!measurementManager.isActive()) {
+        return false;
+      }
+
+      measurementManager.handlePointerMove(x, y);
+      return true;
     },
     onGsplatPick: (hit) => {
       if (buildingEnvelopeController.isDrawing()) {
@@ -5011,6 +5075,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       setPickStatus('ready', 'Ready');
     }
   });
+  measurementManager.setPickWorldPoint((screenX, screenY) => pickingController.pickWorldPoint(screenX, screenY, { log: false }));
 
   sceneObjectManager.subscribe(() => {
     const hoveredObjectId = selectableObjectController.getHoveredObjectId();
@@ -5058,6 +5123,26 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       tag === 'input' ||
       tag === 'textarea' ||
       active?.isContentEditable;
+
+    if (measurementManager.isActive() && !isEditingText) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        measurementManager.handleEscape();
+        return;
+      }
+
+      if (event.key === 'Backspace') {
+        event.preventDefault();
+        measurementManager.undoDraftPoint();
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        measurementManager.completeAreaMeasurement();
+        return;
+      }
+    }
 
     if (transformEditState.enabled && !isEditingText) {
       if (event.key === 'Escape') {
@@ -5112,6 +5197,14 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   window.addEventListener('resize', closeContextMenu);
   window.addEventListener('scroll', closeContextMenu, true);
+  canvas.addEventListener('dblclick', (event) => {
+    if (!measurementManager.isActive()) {
+      return;
+    }
+
+    event.preventDefault();
+    measurementManager.completeAreaMeasurement();
+  });
   document.addEventListener('pointerdown', (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) {
@@ -5164,6 +5257,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     transformGizmo.update();
     const markersChanged = objectMarkerManager.update();
     const routeOverlaysChanged = robotRouteOverlayManager.update();
+    const measurementOverlayChanged = measurementManager.update();
 
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     if (shouldEmitCameraRuntimeState && now - lastCameraVideoRuntimeEmitAt > 250) {
@@ -5173,7 +5267,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return;
     }
 
-    if (markersChanged || routeOverlaysChanged) {
+    if (markersChanged || routeOverlaysChanged || measurementOverlayChanged) {
       emitState();
     }
   });

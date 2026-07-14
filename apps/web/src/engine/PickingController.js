@@ -21,6 +21,8 @@ export class PickingController {
     onBusinessObjectPick,
     onBusinessObjectHover,
     onBusinessObjectHoverClear,
+    onWorldPointPick,
+    onWorldPointerMove,
     onGsplatPick,
     onFallbackPick,
     onPick,
@@ -39,6 +41,8 @@ export class PickingController {
     this.onBusinessObjectPick = onBusinessObjectPick || null;
     this.onBusinessObjectHover = onBusinessObjectHover || null;
     this.onBusinessObjectHoverClear = onBusinessObjectHoverClear || null;
+    this.onWorldPointPick = onWorldPointPick || null;
+    this.onWorldPointerMove = onWorldPointerMove || null;
     this.onGsplatPick = onGsplatPick || null;
     this.onFallbackPick = onFallbackPick || null;
     this.onPick = onPick || null;
@@ -129,6 +133,11 @@ export class PickingController {
 
     const point = this._getCanvasPointFromClient(originalEvent.clientX, originalEvent.clientY);
     if (!point) {
+      this.clearHover();
+      return;
+    }
+
+    if (this.onWorldPointerMove?.(point.x, point.y)) {
       this.clearHover();
       return;
     }
@@ -231,26 +240,56 @@ export class PickingController {
       }
     }
 
-    console.debug(`[Pick] gsplat start: x=${screenX.toFixed(1)}, y=${screenY.toFixed(1)}`);
-    const gsplatHit = await this.gsplatPointPicker?.pick?.(screenX, screenY);
-    if (gsplatHit?.worldPoint) {
-      this.lastPickWorldPosition = gsplatHit.worldPoint.clone?.() ?? gsplatHit.worldPoint;
+    const worldHit = await this.pickWorldPoint(screenX, screenY);
+    if (worldHit && this.onWorldPointPick?.(worldHit)) {
+      return worldHit;
+    }
+
+    if (!worldHit) {
+      return null;
+    }
+
+    if (worldHit.type === 'gsplat') {
+      this.lastPickWorldPosition = worldHit.worldPoint.clone?.() ?? worldHit.worldPoint;
       this.lastPickSource = 'gsplat';
-      this.markerManager.placeMarker(gsplatHit.worldPoint);
-      this.onGsplatPick?.(gsplatHit);
+      this.markerManager.placeMarker(worldHit.worldPoint);
+      this.onGsplatPick?.(worldHit);
       this.onPick?.({
-        point: gsplatHit.worldPoint,
-        localPoint: gsplatHit.localPoint,
-        screen: gsplatHit.screen,
+        point: worldHit.worldPoint,
+        localPoint: worldHit.localPoint,
+        screen: worldHit.screen,
         source: 'gsplat'
       });
+      return worldHit;
+    }
+
+    if (worldHit.type === 'fallback') {
+      this.lastPickWorldPosition = worldHit.point.clone?.() ?? worldHit.point;
+      this.lastPickSource = 'fallback';
+      this.markerManager.placeMarker(worldHit.point);
+      this.onFallbackPick?.(worldHit);
+      this.onPick?.(worldHit);
+      return worldHit;
+    }
+
+    return worldHit;
+  }
+
+  async pickWorldPoint(screenX, screenY, options = {}) {
+    if (options.log !== false) {
+      console.debug(`[Pick] gsplat start: x=${screenX.toFixed(1)}, y=${screenY.toFixed(1)}`);
+    }
+    const gsplatHit = await this.gsplatPointPicker?.pick?.(screenX, screenY);
+    if (gsplatHit?.worldPoint) {
       return {
         type: 'gsplat',
         ...gsplatHit
       };
     }
 
-    console.debug('[Pick] gsplat failed: no world point');
+    if (options.log !== false) {
+      console.debug('[Pick] gsplat failed: no world point');
+    }
 
     const ray = this._getRay(screenX, screenY);
     const fallbackHit = this.bimProxyManager.intersectRay(ray.origin, ray.direction);
@@ -258,11 +297,6 @@ export class PickingController {
       return null;
     }
 
-    this.lastPickWorldPosition = fallbackHit.point.clone?.() ?? fallbackHit.point;
-    this.lastPickSource = 'fallback';
-    this.markerManager.placeMarker(fallbackHit.point);
-    this.onFallbackPick?.(fallbackHit);
-    this.onPick?.(fallbackHit);
     return {
       type: 'fallback',
       ...fallbackHit
