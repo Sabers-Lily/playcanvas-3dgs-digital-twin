@@ -44,6 +44,7 @@ const ACTIVE_EDIT_MODE = {
   QUAD_VIDEO_PROJECTION: 'quadVideoProjection',
   BUILDING_ENVELOPE_DRAWING: 'buildingEnvelopeDrawing'
 };
+const QUAD_PROJECTION_POINT_MARKER_PIXEL_SIZE = 18;
 const TRANSFORM_EDITABLE_TYPES = new Set([
   'gsplat',
   'bim-proxy',
@@ -725,8 +726,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   });
   let lastCameraVideoRuntimeEmitAt = 0;
   const quadHelperMaterial = new pc.StandardMaterial();
-  quadHelperMaterial.diffuse = new pc.Color(0.1, 0.85, 1);
-  quadHelperMaterial.emissive = new pc.Color(0.05, 0.35, 0.5);
+  // Four-point edit markers must stay readable over 3DGS points and aerial imagery.
+  quadHelperMaterial.diffuse = new pc.Color(1, 0.82, 0.08);
+  quadHelperMaterial.emissive = new pc.Color(0.95, 0.58, 0.02);
+  quadHelperMaterial.depthTest = false;
   quadHelperMaterial.update();
   const gsplatProjectionRenderer = new GsplatProjectionRenderer({
     app,
@@ -1144,6 +1147,39 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
   }
 
+  function updateQuadProjectionHelperScale(entity) {
+    const cameraComponent = camera?.camera;
+    if (!entity || !cameraComponent) {
+      return;
+    }
+
+    const viewportHeight = canvas?.clientHeight || app.graphicsDevice?.height || 1;
+    const worldPosition = entity.getPosition();
+    let worldPerPixel = 0;
+
+    if (cameraComponent.projection === pc.PROJECTION_ORTHOGRAPHIC) {
+      worldPerPixel = cameraComponent.orthoHeight / viewportHeight;
+    } else {
+      const cameraPosition = camera.getPosition();
+      const viewDistance = Math.max(0.01, cameraPosition.distance(worldPosition));
+      const verticalFov = cameraComponent.fov * (Math.PI / 180);
+      worldPerPixel = (2 * viewDistance * Math.tan(verticalFov * 0.5)) / viewportHeight;
+    }
+
+    const markerScale = worldPerPixel * QUAD_PROJECTION_POINT_MARKER_PIXEL_SIZE;
+    entity.setLocalScale(markerScale, markerScale, markerScale);
+  }
+
+  function updateQuadProjectionHelperScales() {
+    quadProjectionHelpers.forEach((helpers) => {
+      helpers?.forEach((entity) => {
+        if (!entity?.destroyed) {
+          updateQuadProjectionHelperScale(entity);
+        }
+      });
+    });
+  }
+
   function rebuildQuadProjectionHelpers(cameraId) {
     clearQuadProjectionHelpers(cameraId);
     const cameraObject = sceneObjectManager.getObject(cameraId);
@@ -1161,8 +1197,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         receiveShadows: false,
         material: quadHelperMaterial
       });
-      entity.setLocalScale(0.22, 0.22, 0.22);
       entity.setPosition(...point.position);
+      updateQuadProjectionHelperScale(entity);
       app.root.addChild(entity);
       helpers.push(entity);
     });
@@ -4956,6 +4992,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     gsplatProjectionRenderer.update();
     robotDogPatrolController.update(dt ?? 0);
+    updateQuadProjectionHelperScales();
     refreshTransformGizmo();
     transformGizmo.update();
     const markersChanged = objectMarkerManager.update();

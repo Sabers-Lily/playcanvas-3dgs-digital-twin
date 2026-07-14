@@ -1,6 +1,23 @@
 {
   "assets": [
     {
+      "id": "asset_raw_mrk821k7_8gxd7u",
+      "sourceAssetId": null,
+      "sourceName": "input(1).glb",
+      "storedName": "original.glb",
+      "type": "glb",
+      "runtimeType": "model",
+      "role": "source",
+      "status": "ready",
+      "mimeType": "model/gltf-binary",
+      "size": 8891288,
+      "url": "/api/assets/asset_raw_mrk821k7_8gxd7u/file",
+      "storagePath": "assets/storage/asset_raw_mrk821k7_8gxd7u/original.glb",
+      "createdAt": "2026-07-14T05:39:48.972Z",
+      "derivedAssetIds": [],
+      "error": null
+    },
+    {
       "id": "asset_raw_mrk2n988_qfq79o",
       "sourceAssetId": null,
       "sourceName": "base.sog",
