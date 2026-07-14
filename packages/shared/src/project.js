@@ -1,3 +1,5 @@
+import { normalizeCustomFields } from './customFields.js';
+
 const PROJECT_VERSION = 1;
 
 function cloneJsonValue(value, fallback) {
@@ -35,6 +37,11 @@ function normalizeAsset(asset = {}) {
 }
 
 function normalizeSceneObject(object = {}) {
+  const metadata = cloneJsonValue(object.metadata, {});
+  if (Array.isArray(metadata.customFields)) {
+    metadata.customFields = normalizeCustomFields(metadata.customFields);
+  }
+
   return {
     id: object.id,
     type: object.type || 'custom-object',
@@ -45,7 +52,7 @@ function normalizeSceneObject(object = {}) {
       rotation: normalizeVector3(object.transform?.rotation, [0, 0, 0]),
       scale: normalizeVector3(object.transform?.scale, [1, 1, 1])
     },
-    metadata: cloneJsonValue(object.metadata, {})
+    metadata
   };
 }
 

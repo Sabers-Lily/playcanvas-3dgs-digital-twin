@@ -1,3 +1,5 @@
+import { normalizeCustomFields } from '../../../../packages/shared/src/customFields.js';
+
 const TYPE_ORDER = {
   camera: 1,
   debug: 2,
@@ -102,7 +104,8 @@ function cloneMetadata(metadata) {
       ? { ...metadata.videoProjection }
       : undefined,
     patrol: clonePatrolMetadata(metadata.patrol),
-    envelope: cloneEnvelopeMetadata(metadata.envelope)
+    envelope: cloneEnvelopeMetadata(metadata.envelope),
+    customFields: normalizeCustomFields(metadata.customFields)
   };
 }
 
@@ -141,7 +144,8 @@ function toSceneObjectSnapshot(object) {
       videoProjection: object.metadata?.videoProjection
         ? { ...object.metadata.videoProjection }
         : undefined,
-      patrol: clonePatrolMetadata(object.metadata?.patrol)
+      patrol: clonePatrolMetadata(object.metadata?.patrol),
+      customFields: normalizeCustomFields(object.metadata?.customFields)
     }
   };
 }

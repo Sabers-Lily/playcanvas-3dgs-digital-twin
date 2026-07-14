@@ -18,6 +18,15 @@ import { SelectionManager } from '../editor/SelectionManager.js';
 import { UI_FLAGS } from '../config/uiFlags.js';
 import { resolveApiUrl } from '../config/apiConfig.js';
 import { CAMERA_SOURCE_TYPES, CAMERA_STREAM_STATUSES } from '../../../../packages/shared/src/cameras.js';
+import {
+  createDefaultCustomFieldValue,
+  isValidCustomFieldColor,
+  MAX_CUSTOM_FIELDS,
+  MAX_CUSTOM_FIELD_NAME_LENGTH,
+  normalizeCustomFields,
+  normalizeCustomFieldType,
+  normalizeCustomFieldValue
+} from '../../../../packages/shared/src/customFields.js';
 import { CameraSourceRegistry } from './projection/CameraSourceRegistry.js';
 import { CameraSourceRuntimePool } from './projection/CameraSourceRuntimePool.js';
 import { ProjectionConfigRegistry } from './projection/ProjectionConfigRegistry.js';
@@ -44,6 +53,7 @@ const ACTIVE_EDIT_MODE = {
   QUAD_VIDEO_PROJECTION: 'quadVideoProjection',
   BUILDING_ENVELOPE_DRAWING: 'buildingEnvelopeDrawing'
 };
+const CUSTOM_FIELD_OBJECT_TYPES = new Set(['annotation', BUILDING_ENVELOPE_TYPE]);
 const QUAD_PROJECTION_POINT_MARKER_PIXEL_SIZE = 18;
 const TRANSFORM_EDITABLE_TYPES = new Set([
   'gsplat',
@@ -297,7 +307,8 @@ function normalizeRestoredObjectPayload(object) {
       businessType: object?.metadata?.businessType,
       placedBy: object?.metadata?.placedBy,
       videoProjection: object?.metadata?.videoProjection,
-      patrol: clonePatrolMetadata(object?.metadata?.patrol)
+      patrol: clonePatrolMetadata(object?.metadata?.patrol),
+      customFields: normalizeCustomFields(object?.metadata?.customFields)
     }
   };
 }
@@ -3416,7 +3427,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         source: object.metadata.source || 'editor-created',
         placedBy: object.metadata.placedBy,
         videoProjection: object.metadata.videoProjection,
-        patrol: clonePatrolMetadata(object.metadata.patrol)
+        patrol: clonePatrolMetadata(object.metadata.patrol),
+        customFields: normalizeCustomFields(object.metadata.customFields)
       }
     });
   }
@@ -4191,6 +4203,148 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     emitState();
   }
 
+  function getAnnotationCustomFields(objectId) {
+    const sceneObject = sceneObjectManager.getObject(objectId);
+    if (!sceneObject || !CUSTOM_FIELD_OBJECT_TYPES.has(sceneObject.type)) {
+      return null;
+    }
+
+    return normalizeCustomFields(sceneObject.metadata?.customFields);
+  }
+
+  function setAnnotationCustomFields(objectId, customFields) {
+    const sceneObject = sceneObjectManager.getObject(objectId);
+    if (!sceneObject || !CUSTOM_FIELD_OBJECT_TYPES.has(sceneObject.type)) {
+      console.warn('[AnnotationCustomFields] update failed: selected object is not annotation-like object', {
+        objectId,
+        type: sceneObject?.type
+      });
+      updateStatusMessage('只能编辑标注对象的详细信息');
+      return false;
+    }
+
+    sceneObjectManager.setMetadata(objectId, {
+      ...sceneObject.metadata,
+      customFields: normalizeCustomFields(customFields)
+    });
+    updateStatusMessage('标注详细信息已更新');
+    return true;
+  }
+
+  function createAnnotationCustomFieldId(objectId, fields) {
+    const prefix = `field_${Date.now().toString(36)}`;
+    let index = fields.length + 1;
+    let id = `${prefix}_${index}`;
+    const existingIds = new Set(fields.map((field) => field.id));
+
+    while (existingIds.has(id)) {
+      index += 1;
+      id = `${prefix}_${index}`;
+    }
+
+    return `${objectId}_${id}`;
+  }
+
+  function addAnnotationCustomField(objectId, type = 'text') {
+    const fields = getAnnotationCustomFields(objectId);
+    if (!fields) {
+      return false;
+    }
+
+    if (fields.length >= MAX_CUSTOM_FIELDS) {
+      updateStatusMessage(`标注详细信息最多 ${MAX_CUSTOM_FIELDS} 个字段`);
+      return false;
+    }
+
+    const fieldType = normalizeCustomFieldType(type);
+    const nextField = {
+      id: createAnnotationCustomFieldId(objectId, fields),
+      name: '',
+      type: fieldType,
+      value: createDefaultCustomFieldValue(fieldType)
+    };
+
+    return setAnnotationCustomFields(objectId, [...fields, nextField]);
+  }
+
+  function updateAnnotationCustomField(objectId, fieldId, patch = {}) {
+    const fields = getAnnotationCustomFields(objectId);
+    if (!fields || !fieldId) {
+      return false;
+    }
+
+    const target = fields.find((field) => field.id === fieldId);
+    if (!target) {
+      updateStatusMessage('标注详细信息字段不存在');
+      return false;
+    }
+
+    const nextFields = fields.map((field) => {
+      if (field.id !== fieldId) {
+        return field;
+      }
+
+      const nextType = Object.prototype.hasOwnProperty.call(patch, 'type')
+        ? normalizeCustomFieldType(patch.type)
+        : field.type;
+      const nextField = {
+        ...field,
+        type: nextType
+      };
+
+      if (Object.prototype.hasOwnProperty.call(patch, 'name')) {
+        const nextName = String(patch.name ?? '').trim().slice(0, MAX_CUSTOM_FIELD_NAME_LENGTH);
+        if (!nextName) {
+          updateStatusMessage('字段名称不能为空');
+          return field;
+        }
+
+        const hasDuplicateName = fields.some((candidate) => (
+          candidate.id !== fieldId &&
+          String(candidate.name || '').trim() === nextName
+        ));
+        if (hasDuplicateName) {
+          updateStatusMessage('字段名称已存在');
+          return field;
+        }
+
+        nextField.name = nextName;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(patch, 'type') && !Object.prototype.hasOwnProperty.call(patch, 'value')) {
+        nextField.value = createDefaultCustomFieldValue(nextType);
+      }
+
+      if (Object.prototype.hasOwnProperty.call(patch, 'value')) {
+        if (nextType === 'color' && !isValidCustomFieldColor(patch.value)) {
+          updateStatusMessage('颜色必须是 #RRGGBB');
+          return field;
+        }
+        if (nextType === 'number' && patch.value !== '' && !Number.isFinite(Number(patch.value))) {
+          updateStatusMessage('数值字段格式不正确');
+          return field;
+        }
+        nextField.value = normalizeCustomFieldValue(patch.value, nextType);
+      }
+
+      return nextField;
+    });
+
+    return setAnnotationCustomFields(objectId, nextFields);
+  }
+
+  function deleteAnnotationCustomField(objectId, fieldId) {
+    const fields = getAnnotationCustomFields(objectId);
+    if (!fields || !fieldId) {
+      return false;
+    }
+
+    return setAnnotationCustomFields(
+      objectId,
+      fields.filter((field) => field.id !== fieldId)
+    );
+  }
+
   function addSceneObjectByType(type) {
     if (type === BUILDING_ENVELOPE_TYPE) {
       return startBuildingEnvelopeDrawing();
@@ -4523,6 +4677,19 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         return;
       case 'robot-dog-set-loop':
         setRobotDogPatrolLoop(payload?.robotDogId, payload?.loop);
+        return;
+      case 'add-annotation-custom-field':
+        addAnnotationCustomField(payload?.objectId ?? selectionManager.getSelectedId(), payload?.type);
+        return;
+      case 'update-annotation-custom-field':
+        updateAnnotationCustomField(
+          payload?.objectId ?? selectionManager.getSelectedId(),
+          payload?.fieldId,
+          payload?.patch ?? {}
+        );
+        return;
+      case 'delete-annotation-custom-field':
+        deleteAnnotationCustomField(payload?.objectId ?? selectionManager.getSelectedId(), payload?.fieldId);
         return;
       case 'reload-base':
         loadRemoteSog({

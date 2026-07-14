@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { UI_FLAGS } from '../config/uiFlags.js';
+import AnnotationCustomFieldsSection from './editor/AnnotationCustomFieldsSection.vue';
 import InspectorSection from './editor/InspectorSection.vue';
 import ObjectStatusChip from './editor/ObjectStatusChip.vue';
 import { CAMERA_SOURCE_TYPES, CAMERA_STREAM_STATUSES } from '../../../../packages/shared/src/cameras.js';
@@ -124,6 +125,7 @@ const isGsplat = computed(() => props.selection?.type === 'gsplat');
 const isCameraDevice = computed(() => props.selection?.type === 'cameraDevice');
 const isRobotDog = computed(() => props.selection?.type === 'robotDog');
 const isBuildingEnvelope = computed(() => props.selection?.type === 'buildingEnvelope');
+const isAnnotationDetailsObject = computed(() => ['annotation', 'buildingEnvelope'].includes(props.selection?.type));
 const isMarker = computed(() => props.selection?.type === 'marker');
 const isTransformEditable = computed(() => TRANSFORM_EDITABLE_TYPES.has(props.selection?.type));
 const isTransformEditingSelection = computed(() => (
@@ -457,6 +459,10 @@ function emitBuildingEnvelopeDisplayMode() {
   });
 }
 
+function handleCustomFieldAction(action, payload) {
+  emit('action', action, payload);
+}
+
 function handleCameraStreamSelectionChange() {
   isEditingProjectionStreamUrl.value = false;
   emitVideoProjectionPatch({
@@ -764,6 +770,13 @@ onBeforeUnmount(() => {
               <button class="button-secondary" type="button" @click="emit('action', 'focus-marker')">聚焦 Marker</button>
             </div>
           </InspectorSection>
+
+          <AnnotationCustomFieldsSection
+            v-if="isAnnotationDetailsObject"
+            :object-id="activeSelection.id"
+            :fields="activeSelection.metadata?.customFields ?? []"
+            @action="handleCustomFieldAction"
+          />
 
           <InspectorSection title="操作" :default-open="true">
             <div class="inspector-actions">

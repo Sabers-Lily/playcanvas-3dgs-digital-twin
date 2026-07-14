@@ -945,9 +945,16 @@ input[type='checkbox'] {
 
 .inspector-field input,
 .inspector-field select,
+.inspector-field textarea,
 .vector3-grid input {
   width: 100%;
   min-width: 0;
+}
+
+.inspector-field textarea {
+  min-height: 88px;
+  resize: vertical;
+  box-sizing: border-box;
 }
 
 .inspector-video-preview {
@@ -1040,6 +1047,75 @@ input[type='checkbox'] {
 .button-ghost {
   background: transparent;
   border-color: transparent;
+}
+
+.custom-field-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.custom-field-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.custom-field-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.custom-field-card-header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-field-delete {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 0 8px;
+  color: #ffb1b1;
+}
+
+.custom-field-color-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.custom-field-color-row input[type='color'] {
+  min-width: 42px;
+  padding: 2px;
+}
+
+.custom-field-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.custom-field-error {
+  color: #ffb1b1;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .inspector-note {
