@@ -55,7 +55,7 @@ const ACTIVE_EDIT_MODE = {
   BUILDING_ENVELOPE_DRAWING: 'buildingEnvelopeDrawing'
 };
 const CUSTOM_FIELD_OBJECT_TYPES = new Set(['annotation', BUILDING_ENVELOPE_TYPE]);
-const QUAD_PROJECTION_POINT_MARKER_PIXEL_SIZE = 18;
+const QUAD_PROJECTION_POINT_MARKER_PIXEL_SIZE = 11;
 const TRANSFORM_EDITABLE_TYPES = new Set([
   'gsplat',
   'bim-proxy',
@@ -745,12 +745,25 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     maxActive: MAX_ACTIVE_RENDER_PROJECTIONS
   });
   let lastCameraVideoRuntimeEmitAt = 0;
-  const quadHelperMaterial = new pc.StandardMaterial();
-  // Four-point edit markers must stay readable over 3DGS points and aerial imagery.
-  quadHelperMaterial.diffuse = new pc.Color(1, 0.82, 0.08);
-  quadHelperMaterial.emissive = new pc.Color(0.95, 0.58, 0.02);
-  quadHelperMaterial.depthTest = false;
-  quadHelperMaterial.update();
+  function createQuadHelperMaterial(diffuse, emissive = diffuse) {
+    const material = new pc.StandardMaterial();
+    material.diffuse = diffuse;
+    material.emissive = emissive;
+    material.depthTest = false;
+    material.update();
+    return material;
+  }
+
+  const quadHelperRingMaterial = createQuadHelperMaterial(
+    new pc.Color(0.05, 0.08, 0.12),
+    new pc.Color(0.015, 0.02, 0.03)
+  );
+  const quadHelperCoreMaterials = [
+    createQuadHelperMaterial(new pc.Color(0.48, 0.78, 1), new pc.Color(0.08, 0.2, 0.32)),
+    createQuadHelperMaterial(new pc.Color(0.58, 0.9, 0.74), new pc.Color(0.08, 0.24, 0.15)),
+    createQuadHelperMaterial(new pc.Color(1, 0.8, 0.45), new pc.Color(0.28, 0.18, 0.05)),
+    createQuadHelperMaterial(new pc.Color(0.78, 0.68, 1), new pc.Color(0.18, 0.12, 0.32))
+  ];
   const gsplatProjectionRenderer = new GsplatProjectionRenderer({
     app,
     getGsplatEntity: () => currentGsplatEntity,
@@ -1215,8 +1228,19 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         type: 'sphere',
         castShadows: false,
         receiveShadows: false,
-        material: quadHelperMaterial
+        material: quadHelperRingMaterial
       });
+
+      const core = new pc.Entity(`__quad_projection_point_core_${cameraId}_${point.index}`);
+      core.addComponent('render', {
+        type: 'sphere',
+        castShadows: false,
+        receiveShadows: false,
+        material: quadHelperCoreMaterials[point.index % quadHelperCoreMaterials.length]
+      });
+      core.setLocalScale(0.58, 0.58, 0.58);
+      entity.addChild(core);
+
       entity.setPosition(...point.position);
       updateQuadProjectionHelperScale(entity);
       app.root.addChild(entity);
@@ -4202,6 +4226,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     );
     ensureProjectionPreviewRuntime(cameraId, appliedProjection);
     updateActiveProjectorFromProjection(cameraId, appliedProjection);
+    clearQuadProjectionHelpers(cameraId);
     console.log('[FourPointProjection] apply world anchors', {
       cameraId,
       anchors: projection.quadPoints.map((point) => point.position)

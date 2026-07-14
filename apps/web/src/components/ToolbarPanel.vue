@@ -97,7 +97,6 @@ const menuGroups = [
           { command: 'toolbar-action', payload: 'measure-distance', label: '长度测量', description: '点击两个有效位置创建长度测量', activeTool: 'measure-distance' },
           { command: 'toolbar-action', payload: 'measure-area', label: '面积测量', description: '依次点击边界点创建面积测量', activeTool: 'measure-area' },
           { command: 'toolbar-action', payload: 'clear-measurements', label: '清除测量', description: '清除所有测量结果和当前草稿' },
-          { command: 'toolbar-action', payload: 'exit-measurement', label: '退出测量', description: '返回默认选择模式' }
         ]
       }
     ]
