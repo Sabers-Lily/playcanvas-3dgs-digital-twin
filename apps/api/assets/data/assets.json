@@ -1,7 +1,7 @@
 {
   "assets": [
     {
-      "id": "asset_raw_mrglbpm6_n3f833",
+      "id": "asset_raw_mrk2n988_qfq79o",
       "sourceAssetId": null,
       "sourceName": "base.sog",
       "storedName": "original.sog",
@@ -11,9 +11,9 @@
       "status": "ready",
       "mimeType": "application/octet-stream",
       "size": 384962424,
-      "url": "/api/assets/asset_raw_mrglbpm6_n3f833/file",
-      "storagePath": "assets/storage/asset_raw_mrglbpm6_n3f833/original.sog",
-      "createdAt": "2026-07-11T16:40:10.479Z",
+      "url": "/api/assets/asset_raw_mrk2n988_qfq79o/file",
+      "storagePath": "assets/storage/asset_raw_mrk2n988_qfq79o/original.sog",
+      "createdAt": "2026-07-14T03:08:21.122Z",
       "derivedAssetIds": [],
       "error": null
     },

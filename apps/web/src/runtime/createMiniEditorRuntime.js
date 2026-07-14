@@ -847,12 +847,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return true;
   }
 
-  function ensureCameraVideoRuntime(cameraObjectId, projection = {}) {
+  function ensureCameraVideoRuntime(cameraObjectId, projection = {}, options = {}) {
     const runtime = getOrCreateCameraVideoRuntime(cameraObjectId);
     const resolvedVideoUrl = resolveProjectionVideoUrl(projection);
 
     runtime.load(resolvedVideoUrl, {
-      loop: projection.sourceType !== CAMERA_SOURCE_TYPES.CAMERA_STREAM
+      loop: projection.sourceType !== CAMERA_SOURCE_TYPES.CAMERA_STREAM,
+      forceReload: options.forceReload === true
     }).catch((error) => {
       console.warn('[CameraVideoRuntime] load failed:', {
         cameraObjectId,
@@ -944,13 +945,13 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     return stopped;
   }
 
-  function ensureProjectionPreviewRuntime(cameraObjectId, projection = {}) {
+  function ensureProjectionPreviewRuntime(cameraObjectId, projection = {}, options = {}) {
     const cameraObject = sceneObjectManager.getObject(cameraObjectId);
     if (!cameraObject || cameraObject.type !== 'cameraDevice') {
       return null;
     }
 
-    const runtime = ensureCameraVideoRuntime(cameraObjectId, projection);
+    const runtime = ensureCameraVideoRuntime(cameraObjectId, projection, options);
     emitState();
     return runtime;
   }
@@ -973,17 +974,12 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         sceneObjectManager.getObject(cameraObjectId)?.metadata?.videoProjection
       );
       const manualStreamUrl = String(currentProjection.streamUrl || currentProjection.videoUrl || '').trim();
-      let streamStatus = null;
-      let streamInfo = null;
-      let resolvedStreamUrl = manualStreamUrl;
-
-      // 手填了 HLS 时，绑定摄像头应优先使用手填地址；
-      // 只有没填时才回退到 cameraId 对应的自动流地址。
-      if (!resolvedStreamUrl) {
-        streamStatus = await startCameraStreamFlow(cameraSourceId);
-        streamInfo = await getCameraStream(cameraSourceId);
-        resolvedStreamUrl = streamInfo.absolutePlayUrl || resolveApiUrl(streamInfo.playUrl);
-      }
+      // 绑定动作必须启动 cameraId 对应的后端流；手填 HLS 只决定前端播放地址，
+      // 不能用“地址已填写”推断 FFmpeg 已经运行。
+      const streamStatus = await startCameraStreamFlow(cameraSourceId);
+      const streamInfo = await getCameraStream(cameraSourceId);
+      const backendStreamUrl = streamInfo.absolutePlayUrl || resolveApiUrl(streamInfo.playUrl);
+      const resolvedStreamUrl = manualStreamUrl || backendStreamUrl;
 
       if (!resolvedStreamUrl) {
         updateStatusMessage('Bind camera stream failed: missing stream url');
@@ -1006,7 +1002,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         streamUrl: resolvedStreamUrl
       });
   
-      const previewRuntime = ensureProjectionPreviewRuntime(cameraObjectId, runtimeProjection);
+      // 普通绑定需要清理同 URL 的旧错误态；投影刷新路径必须复用已经就绪的 runtime，
+      // 否则“打开投影”会再次把 readyState 清零，导致 scheduler 暂时移除当前投影。
+      const previewRuntime = ensureProjectionPreviewRuntime(cameraObjectId, runtimeProjection, {
+        forceReload: !shouldRefreshProjector
+      });
 
       if (
         shouldRefreshProjector
@@ -1019,10 +1019,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
       setCameraStreamStatus(cameraSourceId, {
         ...streamStatus,
-        ...streamInfo,
-        absolutePlayUrl: resolvedStreamUrl,
-        playUrl: resolvedStreamUrl,
-        status: CAMERA_STREAM_STATUSES.RUNNING
+        ...streamInfo
       });
       console.log(`[VideoProjection] camera stream bound: objectId=${cameraObjectId} cameraId=${cameraSourceId}`);
       updateStatusMessage(`Camera stream bound: ${cameraSourceId}`);
