@@ -1176,10 +1176,10 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
   }
 
-  function updateQuadProjectionHelperScale(entity) {
+  function getScreenPixelMarkerWorldScale(entity, pixelSize) {
     const cameraComponent = camera?.camera;
     if (!entity || !cameraComponent) {
-      return;
+      return 0;
     }
 
     const viewportHeight = canvas?.clientHeight || app.graphicsDevice?.height || 1;
@@ -1195,7 +1195,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       worldPerPixel = (2 * viewDistance * Math.tan(verticalFov * 0.5)) / viewportHeight;
     }
 
-    const markerScale = worldPerPixel * QUAD_PROJECTION_POINT_MARKER_PIXEL_SIZE;
+    return worldPerPixel * pixelSize;
+  }
+
+  function updateQuadProjectionHelperScale(entity) {
+    const markerScale = getScreenPixelMarkerWorldScale(entity, QUAD_PROJECTION_POINT_MARKER_PIXEL_SIZE);
+    if (!Number.isFinite(markerScale) || markerScale <= 0) {
+      return;
+    }
+
     entity.setLocalScale(markerScale, markerScale, markerScale);
   }
 
@@ -1207,6 +1215,16 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         }
       });
     });
+  }
+
+  function updateBuildingEnvelopeDraftPointScales() {
+    if (!buildingEnvelopeController.isDrawing()) {
+      return;
+    }
+
+    buildingEnvelopeController.updateDraftPointMarkerScales((entity) => (
+      getScreenPixelMarkerWorldScale(entity, QUAD_PROJECTION_POINT_MARKER_PIXEL_SIZE)
+    ));
   }
 
   function rebuildQuadProjectionHelpers(cameraId, { keepCompletedPoints = false } = {}) {
@@ -2554,11 +2572,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return false;
     }
 
-    return buildingEnvelopeController.addPoint(resolvedWorldPosition);
+    const added = buildingEnvelopeController.addPoint(resolvedWorldPosition);
+    updateBuildingEnvelopeDraftPointScales();
+    return added;
   }
 
   function undoBuildingEnvelopePoint() {
-    return buildingEnvelopeController.undoLastPoint();
+    const changed = buildingEnvelopeController.undoLastPoint();
+    updateBuildingEnvelopeDraftPointScales();
+    return changed;
   }
 
   function finishBuildingEnvelopeDrawing(options = {}) {
@@ -5191,6 +5213,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     gsplatProjectionRenderer.update();
     robotDogPatrolController.update(dt ?? 0);
     updateQuadProjectionHelperScales();
+    updateBuildingEnvelopeDraftPointScales();
     refreshTransformGizmo();
     transformGizmo.update();
     const markersChanged = objectMarkerManager.update();

@@ -77,8 +77,9 @@ function midpoint(a, b) {
 
 function createDraftPointMaterial() {
   const material = new pc.StandardMaterial();
-  material.diffuse = new pc.Color(0.05, 0.85, 1);
-  material.emissive = new pc.Color(0.02, 0.2, 0.25);
+  material.diffuse = new pc.Color(0.02, 0.03, 0.04);
+  material.emissive = new pc.Color(0.005, 0.008, 0.012);
+  material.depthTest = false;
   material.useLighting = false;
   material.update();
   return material;
@@ -303,6 +304,25 @@ export class BuildingEnvelopeController {
     marker?.destroy();
     this.rebuildDraftLines();
     this.log('[BuildingEnvelope] point removed');
+    return true;
+  }
+
+  updateDraftPointMarkerScales(getScale) {
+    if (typeof getScale !== 'function') {
+      return false;
+    }
+
+    this.state.markers.forEach((marker) => {
+      if (!marker || marker.destroyed) {
+        return;
+      }
+
+      const scale = getScale(marker);
+      if (Number.isFinite(scale) && scale > 0) {
+        marker.setLocalScale(scale, scale, scale);
+      }
+    });
+
     return true;
   }
 
