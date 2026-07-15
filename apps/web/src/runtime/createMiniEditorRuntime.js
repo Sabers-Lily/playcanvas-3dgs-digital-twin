@@ -937,7 +937,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         }
       }));
 
-      console.log('[CameraStream] cameras loaded:', state.cameraStreams.cameras.map((entry) => entry.id));
     } catch (error) {
       state.cameraStreams.cameras = [];
       state.cameraStreams.apiStatus = 'error';
@@ -968,7 +967,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       throw error;
     }
     setCameraStreamStatus(cameraSourceId, nextStatus);
-    console.log(`[CameraStream] stream started: cameraId=${cameraSourceId}`);
     emitState();
     return nextStatus;
   }
@@ -976,7 +974,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   async function stopCameraStreamFlow(cameraSourceId) {
     const stopped = await stopCameraStream(cameraSourceId);
     setCameraStreamStatus(cameraSourceId, stopped);
-    console.log(`[CameraStream] stream stopped: cameraId=${cameraSourceId}`);
     emitState();
     return stopped;
   }
@@ -1057,7 +1054,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         ...streamStatus,
         ...streamInfo
       });
-      console.log(`[VideoProjection] camera stream bound: objectId=${cameraObjectId} cameraId=${cameraSourceId}`);
       updateStatusMessage(`Camera stream bound: ${cameraSourceId}`);
       emitState();
       return runtimeProjection;
@@ -1306,15 +1302,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     rebuildQuadProjectionHelpers(cameraId, {
       keepCompletedPoints: editingCompleted
     });
-    console.log(`[FourPointProjection] picked world point ${index}`, {
-      x: worldPosition.x,
-      y: worldPosition.y,
-      z: worldPosition.z
-    });
     updateStatusMessage(`鍥涚偣鍖哄煙鎶曞奖鐐逛綅: ${quadPoints.length} / 4`);
 
     if (editingCompleted) {
-      console.log(`[QuadVideoProjection] editing completed: objectId=${cameraId}`);
       updateStatusMessage(`[QuadVideoProjection] editing completed: objectId=${cameraId}`);
     }
 
@@ -1346,13 +1336,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       return;
     }
 
-    console.log('[Projection] sync active projector', {
-      cameraId,
-      mode: projection.mode,
-      enabled: projection.enabled,
-      replaceMode: projection.replaceMode,
-      quadPoints: projection.quadPoints?.length ?? 0
-    });
     syncProjectionArchitectureFromSceneObjects();
     projectionScheduler.evaluate({
       projectionConfigs: projectionConfigRegistry.getAll(),
@@ -1361,50 +1344,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
     gsplatProjectionRenderer.syncActiveSet(projectionScheduler.getActiveSet()).catch((error) => {
       console.warn('[Projection] renderer sync failed:', error);
-    });
-  }
-
-  function logProjectionToggleDiagnostics(cameraId, phase) {
-    const sceneObject = sceneObjectManager.getObject(cameraId);
-    const sourceId = projectionCompatibilityAdapter.getSourceIdForObject(cameraId);
-    const runtimeState = cameraSourceRuntimePool.getState(sourceId);
-    const rendererState = gsplatProjectionRenderer.getRendererState();
-    const rendererStateSummary = Object.entries(rendererState ?? {}).map(([projectionId, state]) => ({
-      projectionId,
-      slotIndex: state.slotIndex,
-      active: state.active,
-      slotEnabled: state.slotEnabled,
-      shaderInstalled: state.shaderInstalled,
-      bound: state.bound,
-      boundToTexture: state.boundToTexture,
-      textureBound: state.textureBound,
-      textureUploading: state.textureUploading,
-      firstUploadLogged: state.firstUploadLogged,
-      videoReady: state.videoReady,
-      readyState: state.videoReadyState,
-      videoWidth: state.videoWidth,
-      videoHeight: state.videoHeight
-    }));
-
-    console.log('[ProjectionToggleDiagnostics]', {
-      phase,
-      cameraId,
-      videoProjectionEnabled: sceneObject?.metadata?.videoProjection?.enabled ?? null,
-      activeSet: projectionScheduler.getActiveSet(),
-      sourceId,
-      runtimeReady: Boolean(
-        runtimeState &&
-        Number(runtimeState.readyState ?? 0) >= 2 &&
-        Number(runtimeState.videoWidth ?? 0) > 0 &&
-        Number(runtimeState.videoHeight ?? 0) > 0 &&
-        runtimeState.status !== 'error'
-      ),
-      runtimeStatus: runtimeState?.status ?? null,
-      runtimeReadyState: runtimeState?.readyState ?? null,
-      runtimePaused: runtimeState?.paused ?? null,
-      runtimeVideoWidth: runtimeState?.videoWidth ?? 0,
-      runtimeVideoHeight: runtimeState?.videoHeight ?? 0,
-      rendererStateSummary
     });
   }
 
@@ -1524,19 +1463,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   }
 
   function buildAssetsSnapshot() {
-    const builtInAssets = [
-      {
-        id: 'base-map',
-        kind: 'gsplat',
-        label: 'base.sog',
-        status: assetAvailability[ASSET_PATHS.baseSog],
-        sourceName: 'base.sog',
-        type: 'gsplat',
-        size: null,
-        url: ASSET_PATHS.baseSog,
-        createdAt: null
-      }
-    ];
+    const builtInAssets = [];
 
     if (UI_FLAGS.showDebugAssets) {
       builtInAssets.push(
@@ -3152,7 +3079,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     emitState();
     const available = await probeAsset(url);
     assetAvailability[url] = available ? 'available' : 'missing';
-    console.info(`${label}: ${assetAvailability[url]} (${url})`);
     emitState();
     return available;
   }
@@ -4152,9 +4078,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         quadPoints: []
       });
       clearQuadProjectionHelpers(cameraId);
-    console.log('[FourPointProjection] start selecting', {
-      cameraId
-    });
     updateStatusMessage('寮€濮嬮€夋嫨鍥涚偣鍖哄煙鎶曞奖');
     return true;
   }
@@ -4240,10 +4163,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     ensureProjectionPreviewRuntime(cameraId, appliedProjection);
     updateActiveProjectorFromProjection(cameraId, appliedProjection);
     clearQuadProjectionHelpers(cameraId);
-    console.log('[FourPointProjection] apply world anchors', {
-      cameraId,
-      anchors: projection.quadPoints.map((point) => point.position)
-    });
     updateStatusMessage('四点区域投影已应用');
     return true;
   }
@@ -4589,18 +4508,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   }
 
   function handleInspectorAction(action, payload = null) {
-    if (
-      action === 'apply-quad-video-projection' ||
-      action === 'disable-video-projection' ||
-      action === 'bind-camera-stream'
-    ) {
-      console.log('[ProjectionDebug] inspector action', {
-        action,
-        selectedId: selectionManager.getSelectedId(),
-        payload
-      });
-    }
-
     switch (action) {
       case 'enter-transform-edit':
         enterTransformEdit(payload?.objectId ?? selectionManager.getSelectedId());
@@ -4868,8 +4775,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         }
         const target = sceneObjectManager.getObject(selectedId);
         const currentProjection = createDefaultVideoProjectionMetadata(selectedId, target?.metadata?.videoProjection);
-        logProjectionToggleDiagnostics(selectedId, 'before-disable');
-
         updateCameraVideoProjection(selectedId, {
           ...currentProjection,
           enabled: false,
@@ -4878,7 +4783,6 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           opacity: readNumberValue(currentProjection.opacity, 1),
           softEdge: readNumberValue(currentProjection.softEdge, 0)
         });
-        logProjectionToggleDiagnostics(selectedId, 'after-disable');
         updateStatusMessage(`${target?.displayName ?? selectedId} projection disabled`);
         return;
       }
@@ -5268,15 +5172,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     );
   }
 
-  Promise.all(assetChecks).then((results) => {
-    const [baseAvailable, convertedAvailable = false, bimAvailable = false] = results;
-    if (UI_FLAGS.showDebugAssets) {
-      console.info(
-        `Asset availability summary: base.sog=${baseAvailable ? 'available' : 'missing'}, converted/map.sog=${convertedAvailable ? 'available' : 'missing'}, ${ASSET_LABELS.bimProxy}=${bimAvailable ? 'available' : 'missing'}`
-      );
-    } else {
-      console.info(`Asset availability summary: base.sog=${baseAvailable ? 'available' : 'missing'}`);
-    }
+  Promise.all(assetChecks).then(() => {
     updateStatusMessage('Asset checks complete');
   });
 

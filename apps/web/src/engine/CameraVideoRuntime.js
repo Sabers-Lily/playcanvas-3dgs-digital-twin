@@ -101,11 +101,6 @@ export class CameraVideoRuntime {
       return this.lastSample;
     }
 
-    console.log(`${this.logPrefix} load`, {
-      runtimeId: this.runtimeId,
-      url: normalizedUrl
-    });
-
     if (isHlsUrl(normalizedUrl)) {
       if (this.videoElement.canPlayType('application/vnd.apple.mpegurl')) {
         this.videoElement.src = normalizedUrl;
@@ -162,9 +157,6 @@ export class CameraVideoRuntime {
           return;
         }
 
-        console.log(`${this.logPrefix} hls attached`, {
-          runtimeId: this.runtimeId
-        });
         hls.loadSource(url);
       });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -173,10 +165,6 @@ export class CameraVideoRuntime {
           return;
         }
 
-        console.log(`${this.logPrefix} hls manifest parsed`, {
-          runtimeId: this.runtimeId,
-          url
-        });
         this.syncToLiveEdge();
         finish(true);
       });
@@ -232,11 +220,6 @@ export class CameraVideoRuntime {
     this.lastError = null;
     this._playAttemptPending = false;
     this.lastSample = this.buildSample();
-    // console.log(`${this.logPrefix} playing`, {
-    //   runtimeId: this.runtimeId,
-    //   currentTime: this.lastSample.currentTime,
-    //   readyState: this.lastSample.readyState
-    // });
   }
 
   handlePause() {

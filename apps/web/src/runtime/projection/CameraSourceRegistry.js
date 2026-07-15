@@ -29,11 +29,6 @@ export class CameraSourceRegistry {
     }
 
     this.sources.set(source.id, source);
-    console.log(`${this.logPrefix} create`, {
-      sourceId: source.id,
-      type: source.type,
-      cameraId: source.cameraId
-    });
     return source;
   }
 

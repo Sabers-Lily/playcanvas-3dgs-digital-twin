@@ -228,8 +228,6 @@ const shouldShowFallbackPreview = computed(() => (
   !currentProjectionRuntime.value?.previewVideoElement &&
   Boolean(projectionPreviewUrl.value)
 ));
-const robotDogTestVideoUrl = '/assets/test.mp4';
-
 const selectedAssetHasReadyRuntime = computed(() => (
   (['sog', 'gsplat', 'glb', 'gltf'].includes(selectedAssetType.value) && Number(props.selectedAsset?.size ?? 0) > 0) ||
   (selectedAssetType.value === 'ply' && props.selectedAsset?.derivedAssets?.some((asset) => asset.type === 'sog' && asset.status === 'ready' && Number(asset.size ?? 0) > 0)) ||
@@ -741,23 +739,6 @@ onBeforeUnmount(() => {
               <button class="button-secondary" type="button" :disabled="!robotDogPatrol.routeEditing" @click="emit('action', 'robot-dog-stop-edit', { robotDogId: activeSelection.id })">停止编辑路线</button>
               <button class="button-secondary" type="button" @click="emit('action', 'robot-dog-clear-route', { robotDogId: activeSelection.id })">清空路线</button>
               <button class="button-primary" type="button" :disabled="!patrolCanStart" @click="emit('action', 'robot-dog-start-patrol', { robotDogId: activeSelection.id })">开始巡航</button>
-            </div>
-          </InspectorSection>
-
-          <InspectorSection v-if="isRobotDog" title="实时路况" :default-open="true">
-            <div class="inspector-grid">
-              <div class="inspector-field">
-                <span>视频预览</span>
-                <video
-                  class="inspector-video-preview"
-                  :src="robotDogTestVideoUrl"
-                  controls
-                  muted
-                  loop
-                  preload="metadata"
-                  playsinline
-                ></video>
-              </div>
             </div>
           </InspectorSection>
 

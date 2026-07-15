@@ -397,25 +397,6 @@ export class GsplatProjectionRenderer {
     }
 
     this.activeProjectionIds = nextIds;
-    console.log(`${this.logPrefix} sync active set`, {
-      activeProjectionIds: this.activeProjectionIds,
-      shaderInstalled: this._chunkInstalled,
-      rendererStateSummary: Object.entries(this.getRendererState()).map(([projectionId, state]) => ({
-        projectionId,
-        slotIndex: state.slotIndex,
-        active: state.active,
-        slotEnabled: state.slotEnabled,
-        bound: state.bound,
-        boundToTexture: state.boundToTexture,
-        textureBound: state.textureBound,
-        textureUploading: state.textureUploading,
-        firstUploadLogged: state.firstUploadLogged,
-        videoReady: state.videoReady,
-        readyState: state.videoReadyState,
-        videoWidth: state.videoWidth,
-        videoHeight: state.videoHeight
-      }))
-    });
     return this.getRendererState();
   }
 
@@ -469,20 +450,6 @@ export class GsplatProjectionRenderer {
 
     // 每个 slot 都维护自己的视频运行时、纹理绑定和 shader uniform。
     this.ensureSlotTexture(slot);
-    console.log(`${this.logPrefix} activate`, {
-      slotIndex,
-      projectionId,
-      sourceId: source.id,
-      slotEnabled: slot.enabled,
-      bound: Boolean(videoElement),
-      boundToTexture: Boolean(slot.boundVideoElement === videoElement),
-      textureBound: Boolean(slot.texture),
-      textureUploading: slot.textureUploading,
-      videoReady: canBindVideoToTexture(videoElement),
-      readyState: videoElement?.readyState ?? 0,
-      videoWidth: videoElement?.videoWidth ?? 0,
-      videoHeight: videoElement?.videoHeight ?? 0
-    });
     this.rendererState.set(projectionId, {
       ...this.createSlotRendererState(slot),
       slotIndex,
@@ -526,14 +493,6 @@ export class GsplatProjectionRenderer {
     if (slot.videoElement && canBindVideoToTexture(slot.videoElement)) {
       slot.texture.setSource(slot.videoElement);
       slot.boundVideoElement = slot.videoElement;
-      if (!slot.hasLoggedTextureBind) {
-        slot.hasLoggedTextureBind = true;
-        console.log('[PlayCanvasVideoTexture] bind', {
-          slotIndex: slot.slotIndex,
-          width: slot.videoElement.videoWidth ?? 0,
-          height: slot.videoElement.videoHeight ?? 0
-        });
-      }
     }
   }
 
@@ -544,10 +503,6 @@ export class GsplatProjectionRenderer {
     }
 
     if (slot.projectionId) {
-      console.log(`${this.logPrefix} deactivate`, {
-        projectionId: slot.projectionId,
-        slotIndex
-      });
       this.rendererState.set(slot.projectionId, {
         ...this.createSlotRendererState(slot),
         slotIndex,
@@ -580,7 +535,6 @@ export class GsplatProjectionRenderer {
     this._hasLoggedMissingMaterial = false;
 
     if (this.sceneMaterial && this.sceneMaterial !== material) {
-      console.log(`${this.logPrefix} shader material changed, restoring previous chunk`);
       this.restoreShaderChunk();
     }
 
@@ -960,14 +914,6 @@ export class GsplatProjectionRenderer {
       ) {
         slot.texture.setSource(slot.videoElement);
         slot.boundVideoElement = slot.videoElement;
-        if (!slot.hasLoggedTextureBind) {
-          slot.hasLoggedTextureBind = true;
-          console.log('[PlayCanvasVideoTexture] bind', {
-            slotIndex: slot.slotIndex,
-            width: slot.videoElement.videoWidth ?? 0,
-            height: slot.videoElement.videoHeight ?? 0
-          });
-        }
       }
 
       if (
@@ -978,14 +924,7 @@ export class GsplatProjectionRenderer {
       ) {
         slot.texture.upload();
         slot.textureUploading = true;
-        if (!slot.firstUploadLogged) {
-          slot.firstUploadLogged = true;
-          console.info(`${this.logPrefix} first texture upload`, {
-            slotIndex: slot.slotIndex,
-            projectionId: slot.projectionId,
-            sourceKey: slot.sourceKey
-          });
-        }
+        slot.firstUploadLogged = true;
       }
 
       if (slot.projectionId) {

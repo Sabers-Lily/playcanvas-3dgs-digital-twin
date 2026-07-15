@@ -58,7 +58,7 @@ defineEmits([
 
 const visibleAssets = computed(() => (
   Array.isArray(props.assets)
-    ? props.assets.filter((asset) => UI_FLAGS.showDebugAssets || asset.id === 'base-map' || asset.role)
+    ? props.assets.filter((asset) => UI_FLAGS.showDebugAssets || asset.role)
     : []
 ));
 

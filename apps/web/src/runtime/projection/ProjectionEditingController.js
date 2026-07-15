@@ -39,9 +39,6 @@ export class ProjectionEditingController {
       enabled: false,
       quadPoints: []
     });
-    console.log(`${this.logPrefix} start`, {
-      projectionId
-    });
     return true;
   }
 
@@ -90,11 +87,6 @@ export class ProjectionEditingController {
     this.compatibilityAdapter.updateProjectionForObject(projection.objectId, {
       quadPoints,
       quadEditing
-    });
-    console.log(`${this.logPrefix} world point`, {
-      projectionId: this.editingProjectionId,
-      index,
-      world: nextPoint.position
     });
 
     if (!quadEditing) {

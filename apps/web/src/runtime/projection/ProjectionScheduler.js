@@ -63,10 +63,6 @@ export class ProjectionScheduler {
 
     if (changed) {
       this.activeSet = nextActiveSet;
-      console.log(`${this.logPrefix} active set changed`, {
-        activeProjectionIds: [...this.activeSet],
-        maxActive: this.maxActive
-      });
     }
 
     return this.activeSet;

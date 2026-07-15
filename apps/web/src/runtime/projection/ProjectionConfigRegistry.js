@@ -47,11 +47,6 @@ export class ProjectionConfigRegistry {
     }
 
     this.configs.set(projection.id, projection);
-    console.log(`${this.logPrefix} create`, {
-      projectionId: projection.id,
-      objectId: projection.objectId,
-      sourceId: projection.sourceId
-    });
     return projection;
   }
 

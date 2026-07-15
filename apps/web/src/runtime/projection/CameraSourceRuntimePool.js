@@ -78,10 +78,6 @@ export class CameraSourceRuntimePool {
       };
       this.entriesBySourceId.set(sourceId, entry);
       this.entriesBySourceKey.set(sourceKey, entry);
-      console.log(`${this.logPrefix} create`, {
-        sourceId,
-        sourceKey
-      });
     }
 
     if (consumerId) {
@@ -111,11 +107,6 @@ export class CameraSourceRuntimePool {
       entry.runtime.play?.();
     }
 
-    console.log(`${this.logPrefix} reuse`, {
-      sourceId,
-      sourceKey,
-      refCount: entry.refCount
-    });
     return entry;
   }
 
