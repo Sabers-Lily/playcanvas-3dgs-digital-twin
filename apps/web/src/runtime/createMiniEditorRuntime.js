@@ -1050,7 +1050,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         && (nextProjection.quadPoints?.length ?? 0) === 4
       ) {
         updateActiveProjectorFromProjection(cameraObjectId, runtimeProjection);
-        rebuildQuadProjectionHelpers(cameraObjectId);
+        clearQuadProjectionHelpers(cameraObjectId);
       }
 
       setCameraStreamStatus(cameraSourceId, {
@@ -1213,10 +1213,15 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     });
   }
 
-  function rebuildQuadProjectionHelpers(cameraId) {
+  function rebuildQuadProjectionHelpers(cameraId, { keepCompletedPoints = false } = {}) {
     clearQuadProjectionHelpers(cameraId);
     const cameraObject = sceneObjectManager.getObject(cameraId);
-    const points = cameraObject?.metadata?.videoProjection?.quadPoints ?? [];
+    const projection = cameraObject?.metadata?.videoProjection ?? null;
+    const points = projection?.quadPoints ?? [];
+    if (!projection?.quadEditing && !keepCompletedPoints) {
+      return;
+    }
+
     if (!points.length) {
       return;
     }
@@ -1298,7 +1303,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         quadPoints
       });
 
-    rebuildQuadProjectionHelpers(cameraId);
+    rebuildQuadProjectionHelpers(cameraId, {
+      keepCompletedPoints: editingCompleted
+    });
     console.log(`[FourPointProjection] picked world point ${index}`, {
       x: worldPosition.x,
       y: worldPosition.y,
@@ -4086,7 +4093,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     const nextProjection = syncCameraProjectionMetadata(cameraId, patch);
     updateActiveProjectorFromProjection(cameraId, nextProjection);
-    rebuildQuadProjectionHelpers(cameraId);
+    if (nextProjection?.quadEditing) {
+      rebuildQuadProjectionHelpers(cameraId);
+    } else {
+      clearQuadProjectionHelpers(cameraId);
+    }
     updateStatusMessage('Projection updated');
     return nextProjection;
   }
@@ -4160,7 +4171,9 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       ...cameraObject.metadata?.videoProjection,
       quadEditing: false
     });
-    rebuildQuadProjectionHelpers(cameraId);
+    rebuildQuadProjectionHelpers(cameraId, {
+      keepCompletedPoints: true
+    });
     updateStatusMessage('鍋滄閫夋嫨鍥涚偣鍖哄煙鎶曞奖');
     return true;
   }
@@ -4907,7 +4920,11 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
           return;
         }
         updateActiveProjectorFromProjection(selectedId, nextProjection);
-        rebuildQuadProjectionHelpers(selectedId);
+        if (nextProjection.quadEditing) {
+          rebuildQuadProjectionHelpers(selectedId);
+        } else {
+          clearQuadProjectionHelpers(selectedId);
+        }
         updateStatusMessage('Projection updated');
         return;
       }

@@ -1,6 +1,23 @@
 {
   "assets": [
     {
+      "id": "asset_raw_mrkv88wf_s0bz5u",
+      "sourceAssetId": null,
+      "sourceName": "base.sog",
+      "storedName": "original.sog",
+      "type": "sog",
+      "runtimeType": "gsplat",
+      "role": "source",
+      "status": "ready",
+      "mimeType": "application/octet-stream",
+      "size": 384962424,
+      "url": "/api/assets/asset_raw_mrkv88wf_s0bz5u/file",
+      "storagePath": "assets/storage/asset_raw_mrkv88wf_s0bz5u/original.sog",
+      "createdAt": "2026-07-14T16:28:29.715Z",
+      "derivedAssetIds": [],
+      "error": null
+    },
+    {
       "id": "asset_raw_mrk821k7_8gxd7u",
       "sourceAssetId": null,
       "sourceName": "input(1).glb",
@@ -14,23 +31,6 @@
       "url": "/api/assets/asset_raw_mrk821k7_8gxd7u/file",
       "storagePath": "assets/storage/asset_raw_mrk821k7_8gxd7u/original.glb",
       "createdAt": "2026-07-14T05:39:48.972Z",
-      "derivedAssetIds": [],
-      "error": null
-    },
-    {
-      "id": "asset_raw_mrk2n988_qfq79o",
-      "sourceAssetId": null,
-      "sourceName": "base.sog",
-      "storedName": "original.sog",
-      "type": "sog",
-      "runtimeType": "gsplat",
-      "role": "source",
-      "status": "ready",
-      "mimeType": "application/octet-stream",
-      "size": 384962424,
-      "url": "/api/assets/asset_raw_mrk2n988_qfq79o/file",
-      "storagePath": "assets/storage/asset_raw_mrk2n988_qfq79o/original.sog",
-      "createdAt": "2026-07-14T03:08:21.122Z",
       "derivedAssetIds": [],
       "error": null
     },
