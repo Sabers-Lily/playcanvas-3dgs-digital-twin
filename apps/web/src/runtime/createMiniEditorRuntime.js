@@ -124,14 +124,14 @@ const BUSINESS_OBJECT_DEFINITIONS = {
   },
   robot: {
     idPrefix: 'robot',
-    displayName: '鏃犱汉璁惧',
-    typeLabel: '鏃犱汉璁惧',
+    displayName: '无人设备',
+    typeLabel: '无人设备',
     businessType: 'robot'
   },
   robotDog: {
     idPrefix: 'robot_dog',
-    displayName: '鏃犱汉璁惧',
-    typeLabel: '鏃犱汉璁惧',
+    displayName: '机器狗',
+    typeLabel: '机器狗',
     businessType: 'robotDog'
   },
   cameraDevice: {
@@ -142,20 +142,20 @@ const BUSINESS_OBJECT_DEFINITIONS = {
   },
   device: {
     idPrefix: 'device',
-    displayName: '鏃犱汉璁惧',
-    typeLabel: '鏃犱汉璁惧',
+    displayName: '设备',
+    typeLabel: '设备',
     businessType: 'device'
   },
   hotspot: {
     idPrefix: 'hotspot',
-    displayName: '鐑偣',
-    typeLabel: '鐑偣',
+    displayName: '热点',
+    typeLabel: '热点',
     businessType: 'hotspot'
   },
   annotation: {
     idPrefix: 'annotation',
-    displayName: '鏍囨敞',
-    typeLabel: '鏍囨敞',
+    displayName: '标注',
+    typeLabel: '标注',
     businessType: 'annotation'
   },
   routePoint: {
@@ -174,14 +174,14 @@ const BUSINESS_OBJECT_DEFINITIONS = {
 
 const BUSINESS_OBJECT_NAME_LABELS = {
   empty: '空对象',
-  robot: '鏃犱汉璁惧',
-  robotDog: '鏃犱汉璁惧',
+  robot: '无人设备',
+  robotDog: '机器狗',
   cameraDevice: '摄像头',
-  device: '璁惧',
-  hotspot: '鐑偣',
-  annotation: '鏍囨敞',
+  device: '设备',
+  hotspot: '热点',
+  annotation: '标注',
   routePoint: '路线点',
-  buildingEnvelope: '鏍囨敞'
+  buildingEnvelope: '标注'
 };
 
 function shouldLogPerf() {
@@ -206,7 +206,7 @@ function describeError(err) {
 
 function describeCameraStreamError(error) {
   if (error?.code === 'FFMPEG_NOT_FOUND') {
-    return '鏈壘鍒?ffmpeg锛岃瀹夎鎴栭厤缃?FFMPEG_PATH';
+    return '未找到 ffmpeg，请安装或配置 FFMPEG_PATH';
   }
 
   return describeError(error);
@@ -368,7 +368,7 @@ function cloneQuadPoints(points) {
   return points.map((point, index) => ({
     id: point.id ?? `quad-point-${String(index + 1).padStart(3, '0')}`,
     index: point.index ?? index,
-    label: point.label ?? ['宸︿笂', '鍙充笂', '鍙充笅', '宸︿笅'][index] ?? `鐐?${index + 1}`,
+    label: point.label ?? ['左上', '右上', '右下', '左下'][index] ?? `点${index + 1}`,
     position: Array.isArray(point.position) ? [...point.position] : [0, 0, 0]
   }));
 }
@@ -428,15 +428,15 @@ function createDefaultEnvelopeMetadata(partial = {}) {
 }
 
 function createDefaultVideoProjectionMetadata(id, partial = {}) {
-  // 杩欐槸 cameraDevice 鎸佷箙鍖栧埌 metadata 閲岀殑鏍囧噯鎶曞奖缁撴瀯銆?
-  // 鎶曞奖杩愯鏃跺悗缁細浠庤繖浠界粨鏋勬淳鐢熷嚭 registry 鐘舵€併€?
+  // 这是 cameraDevice 持久化到 metadata 里的标准投影结构。
+  // 投影运行时后续会从这份结构派生出 registry 状态。
   return {
     id,
     enabled: partial.enabled ?? false,
     sourceType: partial.sourceType ?? CAMERA_SOURCE_TYPES.CAMERA_STREAM,
     cameraId: partial.cameraId ?? 'camera1',
     streamUrl: partial.streamUrl ?? null,
-    // 褰撳墠鍙繚鐣欒鐩栨姇褰辫矾寰勶紝缁熶竴褰掍竴鍒?quadOverlay銆?
+    // 当前只保留覆盖投影路径，统一归一到 quadOverlay。
     mode: 'quadOverlay',
     videoUrl: partial.videoUrl ?? '',
     projectorFov: readNumberValue(partial.projectorFov, 45),
@@ -466,7 +466,7 @@ function getWebglSupportStatus(canvas) {
       };
     }
   } catch (_error) {
-    // 鎺㈡祴鍑洪敊鏃跺拷鐣ュ紓甯革紝缁х画璧颁笅闈㈢殑璇︾粏鍒ゆ柇鍒嗘敮銆?
+    // 探测出错时忽略异常，继续走下面的详细判断分支。
   }
 
   let hasWebgl1 = false;
@@ -500,7 +500,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
   const app = new pc.Application(canvas, {
     graphicsDeviceOptions: {
-      // 鏌愪簺娴忚鍣ㄦ垨椹卞姩鍦?gsplat 娓叉煋鍜?picker pass 涓細瑙﹀彂鏃犳晥鐨?MSAA resolve 閿欒銆?
+      // 某些浏览器或驱动在 gsplat 渲染和 picker pass 中会触发无效的 MSAA resolve 错误。
       antialias: false
     },
     mouse: new pc.Mouse(document.body),
@@ -823,8 +823,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   }
 
   function syncProjectionArchitectureFromSceneObjects() {
-    // 璁╄繍琛屾椂 projection registry 濮嬬粓浠?SceneObjectManager 娲剧敓锛?
-    // 杩欐牱 metadata 浠嶇劧鏄暱鏈熺ǔ瀹氱殑鐪熷疄鏁版嵁鏉ユ簮銆?
+    // 让运行时 projection registry 始终从 SceneObjectManager 派生，
+    // 这样 metadata 仍然是长期稳定的真实数据来源。
     sceneObjectManager.getObjects()
       .filter((sceneObject) => sceneObject.type === 'cameraDevice')
       .forEach((sceneObject) => {
@@ -1304,7 +1304,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     const point = {
       id: `quad-point-${String(index + 1).padStart(3, '0')}`,
       index,
-      label: ['宸︿笂', '鍙充笂', '鍙充笅', '宸︿笅'][index],
+      label: ['左上', '右上', '右下', '左下'][index],
       position: [worldPosition.x, worldPosition.y, worldPosition.z]
     };
     const quadPoints = [...currentProjection.quadPoints, point];
@@ -1320,7 +1320,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     rebuildQuadProjectionHelpers(cameraId, {
       keepCompletedPoints: editingCompleted
     });
-    updateStatusMessage(`鍥涚偣鍖哄煙鎶曞奖鐐逛綅: ${quadPoints.length} / 4`);
+    updateStatusMessage(`四点区域投影点位: ${quadPoints.length} / 4`);
 
     if (editingCompleted) {
       updateStatusMessage(`[QuadVideoProjection] editing completed: objectId=${cameraId}`);
@@ -1447,8 +1447,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     const [rx, ry, rz] = nextTransform.rotation;
     const [sx, sy, sz] = nextTransform.scale;
 
-    // 涓氬姟瀵硅薄鎸傚湪 scene root 涓嬮潰锛?
-    // 鎵€浠ユ妸杩欎釜 transform 淇濆瓨鍦ㄥ満鏅姸鎬侀噷灏辫兘淇濇寔鐩稿悓鐨勪笘鐣屼綅缃€?
+    // 业务对象挂在 scene root 下面，
+    // 所以把这个 transform 保存到场景状态里就能保持相同的世界位置。
     object.entity.setLocalPosition(x, y, z);
     object.entity.setLocalEulerAngles(rx, ry, rz);
     object.entity.setLocalScale(sx, sy, sz);
@@ -1688,17 +1688,17 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     if (getEditingQuadProjectionCameraId()) {
-      updateStatusMessage('璇峰厛瀹屾垚鍥涚偣閫夋嫨');
+      updateStatusMessage('请先完成四点选择');
       return false;
     }
 
     if (buildingEnvelopeController.isDrawing()) {
-      updateStatusMessage('璇峰厛瀹屾垚褰撳墠缂栬緫妯″紡');
+      updateStatusMessage('请先完成当前编辑模式');
       return false;
     }
 
     if (robotDogPatrolController.getEditingRobotDogId()) {
-      updateStatusMessage('璇峰厛瀹屾垚褰撳墠缂栬緫妯″紡');
+      updateStatusMessage('请先完成当前编辑模式');
       return false;
     }
 
@@ -2232,7 +2232,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       points: patch.points ?? currentEnvelope.points
     });
 
-    // 鍏堜繚鐣欏簭鍒楀寲灞傜殑鐪熷疄鏁版嵁锛屽啀鎹閲嶅缓娓叉煋瀹炰綋銆?
+    // 先保留序列化层的真实数据，再据此重建渲染实体。
     buildingEnvelopeController.rebuildEnvelopeEntity(sceneObject.entity, nextEnvelope);
     buildingEnvelopeController.bindEnvelopeEntity(sceneObject.entity, objectId, nextEnvelope);
     sceneObjectManager.updateObject(objectId, {
@@ -2261,8 +2261,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     const changed = updateBuildingEnvelope(objectId, {
       ...currentEnvelope,
       height: nextHeight,
-      // Envelope 鍒濆楂樺害涓?0 鏃朵細闅愯棌椤堕儴鍜屼晶闈紝
-      // 鍥犳绗竴娆℃姮楂橀珮搴︽椂搴旀樉绀虹湡瀹炰綋閲忥紝鑰屼笉鏄户缁繚鐣欎笉鍙鐨勫湴闈㈣疆寤撱€?
+      // Envelope 初始高度为 0 时会隐藏顶部和侧面，
+      // 因此第一次抬高高度时应显示真实体量，而不是继续保留不可见的地面轮廓。
         topVisible: nextHeight <= 0 ? false : (shouldPromoteVolumeFaces ? true : currentEnvelope.topVisible !== false),
       sideVisible: nextHeight <= 0 ? false : (shouldPromoteVolumeFaces ? true : currentEnvelope.sideVisible !== false)
     });
@@ -3223,7 +3223,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       visible
     }).then((result) => {
       sceneObjectManager.updateObject(id, {
-        typeLabel: '妯″瀷',
+        typeLabel: '模型',
         metadata: {
           url,
           sourceName: sourceName || displayName,
@@ -3985,7 +3985,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
   function renameSelectedObject(nextName) {
     const selectedId = selectionManager.getSelectedId();
     if (!selectedId) {
-      updateStatusMessage('鏈€夋嫨瀵硅薄');
+      updateStatusMessage('未选择对象');
       return false;
     }
 
@@ -3996,7 +3996,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     if (!trimmed) {
-      updateStatusMessage('鍚嶇О涓嶈兘涓虹┖');
+      updateStatusMessage('名称不能为空');
       return false;
     }
 
@@ -4011,7 +4011,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       currentObject.entity.name = trimmed;
     }
 
-    updateStatusMessage(`宸查噸鍛藉悕: ${previousName} -> ${trimmed}`);
+    updateStatusMessage(`已重命名: ${previousName} -> ${trimmed}`);
     return true;
   }
 
@@ -4062,7 +4062,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       ...cameraObject.metadata?.videoProjection,
       mode: nextMode
     });
-    updateStatusMessage(`鎶曞奖妯″紡: ${nextMode}`);
+    updateStatusMessage(`投影模式: ${nextMode}`);
     return nextProjection;
   }
 
@@ -4075,7 +4075,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     const editingCameraId = getEditingQuadProjectionCameraId();
     if (editingCameraId && editingCameraId !== cameraId) {
-      updateStatusMessage('璇峰厛瀹屾垚鎴栧彇娑堝綋鍓嶆憚鍍忓ご鍥涚偣閫夋嫨');
+      updateStatusMessage('请先完成或取消当前摄像头四点选择');
       return false;
     }
 
@@ -4087,8 +4087,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
     measurementManager.deactivate({ silent: true });
 
-    // 鍦ㄥ鐢ㄨ鍙ｇ偣鍑绘潵閲囬泦鍥涚偣鏈熼棿锛岃淇濇寔 cameraDevice 浠嶇劧澶勪簬閫変腑鐘舵€侊紝
-    // 鍚﹀垯鍙充晶灞炴€т細涓㈠け涓婁笅鏂囥€?
+    // 在复用视口点击来采集四点期间，要保持 cameraDevice 仍然处于选中状态，
+    // 否则右侧属性会丢失上下文。
     clearBuildingEnvelopeHover();
     selectionManager.select(cameraId);
     projectionEditingController.start(projectionCompatibilityAdapter.getProjectionIdForObject(cameraId));
@@ -4100,7 +4100,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         quadPoints: []
       });
       clearQuadProjectionHelpers(cameraId);
-    updateStatusMessage('寮€濮嬮€夋嫨鍥涚偣鍖哄煙鎶曞奖');
+    updateStatusMessage('开始选择四点区域投影');
     return true;
   }
 
@@ -4119,7 +4119,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     rebuildQuadProjectionHelpers(cameraId, {
       keepCompletedPoints: true
     });
-    updateStatusMessage('鍋滄閫夋嫨鍥涚偣鍖哄煙鎶曞奖');
+    updateStatusMessage('停止选择四点区域投影');
     return true;
   }
 
@@ -4133,18 +4133,18 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
     }
 
     if ((projection?.quadPoints?.length ?? 0) !== 4) {
-      updateStatusMessage('鍥涚偣鍖哄煙鎶曞奖闇€瑕?4 涓偣');
+      updateStatusMessage('四点区域投影需要 4 个点');
       return false;
     }
 
     const resolvedProjection = await ensureProjectionVideoSource(cameraId, projection);
     if (!resolvedProjection) {
-      updateStatusMessage(`鍥涚偣鎶曞奖澶辫触锛氳鍏堢粦瀹氭憚鍍忓ご娴?${projection.cameraId ?? 'camera1'}`);
+      updateStatusMessage(`四点投影失败：请先绑定摄像头流 ${projection.cameraId ?? 'camera1'}`);
       return false;
     }
 
-    // 搴旂敤鍥涚偣鎶曞奖鏃朵繚鐣欏凡缁忛€夊ソ鐨勪笘鐣岄敋鐐癸紝
-    // 鍚屾椂鎶婅繍琛屾椂鐘舵€佸綊涓€鍒板綋鍓嶄娇鐢ㄧ殑鍙鍖哄煙鎶曞奖璺緞涓娿€?
+    // 应用四点投影时保留已经选好的世界锚点，
+    // 同时把运行时状态归一到当前使用的可见区域投影路径上。
     projection = createDefaultVideoProjectionMetadata(cameraId, {
       ...projection,
       ...resolvedProjection
@@ -4176,8 +4176,8 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
       flipY: projection.flipY,
       replaceMode: projection.replaceMode ?? true
     });
-    // 鍥涚偣搴旂敤瀹屾垚鍚庯紝浠ユ渶缁堝綊涓€鍖栭厤缃ˉ涓€娆￠瑙堝拰鍦板浘鍒锋柊锛?
-    // 閬垮厤鈥滃厛缁戝畾鎽勫儚澶粹€濆拰鈥滅洿鎺ュ洓鐐规姇褰扁€濊蛋鍒颁笉鍚岀殑鏈€缁堟縺娲绘椂鏈恒€?
+    // 四点应用完成后，以最终归一化配置补一次预览和地图刷新，
+    // 避免“先绑定摄像头”和“直接四点投影”走到不同的最终激活时机。
     const appliedProjection = nextProjection ?? createDefaultVideoProjectionMetadata(
       cameraId,
       sceneObjectManager.getObject(cameraId)?.metadata?.videoProjection
@@ -4548,7 +4548,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
         return;
       case 'apply-alignment':
         if (selectionManager.getSelectedId() && getBuildingEnvelopeObject(selectionManager.getSelectedId())) {
-          updateStatusMessage('寤虹瓚澶氳竟浣撴殏涓嶆敮鎸佸湪姝ら潰鏉跨洿鎺ョ紪杈?Transform');
+          updateStatusMessage('建筑多边体暂不支持在此面板直接编辑 Transform');
           return;
         }
         setAlignmentFromUi(payload ?? {});
@@ -4953,7 +4953,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
       const editingQuadCameraId = getEditingQuadProjectionCameraId();
       if (editingQuadCameraId) {
-        // 鍥涚偣缂栬緫鏈熼棿锛岃鍙ｇ偣鍑昏鍏堝姞閿氱偣锛屽啀璋堟櫘閫氭嬀鍙栨祦绋嬨€?
+        // 四点编辑期间，视口点击要先加锚点，再走普通拾取流程。
         addQuadVideoProjectionPoint(editingQuadCameraId, hit.worldPoint);
         selectionManager.select(editingQuadCameraId);
         return;
@@ -5001,7 +5001,7 @@ export function createMiniEditorRuntime({ canvas, viewportElement }) {
 
       const editingQuadCameraId = getEditingQuadProjectionCameraId();
       if (editingQuadCameraId) {
-        // gsplat 鎷惧彇澶辨晥鏃讹紝fallback pick 涔熻淇濇寔鍚屾牱鐨勪紭鍏堢骇瑙勫垯銆?
+        // gsplat 拾取失效时，fallback pick 也要保持同样的优先级规则。
         addQuadVideoProjectionPoint(editingQuadCameraId, hit.point);
         selectionManager.select(editingQuadCameraId);
         return;
